@@ -1,0 +1,13 @@
+{
+  "training_summary": {
+    "total_samples": 338,
+    "training_date": "20250911_074347",
+    "dataset_path": "/Users/a12/mini-rag/src/data/dataset.xlsx"
+  },
+  "validation_results": {
+    "compliance_accuracy": 0.9852941176470589
+  },
+  "test_results": {
+    "compliance_accuracy": 0.9852941176470589
+  }
+}

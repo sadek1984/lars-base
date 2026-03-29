@@ -1,0 +1,17 @@
+{
+  "training_summary": {
+    "total_samples": 338,
+    "training_date": "20251115_103527",
+    "dataset_path": "data/dataset.xlsx",
+    "statistical_combinations": 154
+  },
+  "validation_results": {
+    "compliance_accuracy": 0.9852941176470589,
+    "concentration_mse": 0.8501412407892082
+  },
+  "test_results": {
+    "compliance_accuracy": 0.9705882352941176,
+    "concentration_mse": 0.712063853677818
+  },
+  "approach": "Hybrid: Statistical Process Control + ML Prediction (no data leakage)"
+}

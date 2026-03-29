@@ -1,0 +1,96 @@
+{
+  "processing_stats": {
+    "total_files": 586,
+    "successful_files": 220,
+    "failed_files": 366,
+    "total_samples": 4993,
+    "positive_samples": 908,
+    "files_with_dates": 583
+  },
+  "analysis_patterns": {
+    "pesticide_group_distribution": {
+      "pyrethroid": 302,
+      "mite_control": 160,
+      "chitin_synthesis_inhibitor": 79,
+      "phenylpyrazole": 30,
+      "organophosphorus": 21,
+      "triazole_fungicide": 20,
+      "juvenile_hormone_mimic": 15,
+      "herbicide": 8,
+      "gibberellin_inhibitor": 3,
+      "dicarboximide_fungicide": 2,
+      "other": 1
+    },
+    "vegetable_contamination_rates": {
+      "american_pumpkin": 0.0,
+      "spinach": 0.0,
+      "orange": 0.0,
+      "najdi_pumpkin": 0.0,
+      "mint": 0.0,
+      "jaba_fruit": 0.0,
+      "grapefruit": 0.0,
+      "lemon": 0.0,
+      "armenian_cucumber": 0.0,
+      "arugula": 0.0,
+      "fig": 0.2,
+      "zucchini": 0.3684210526315789,
+      "beans": 0.40476190476190477,
+      "parsley": 0.5,
+      "okra": 0.5,
+      "lettuce": 0.5,
+      "cucumber": 0.5342465753424658,
+      "red_bell_pepper": 0.6,
+      "\u0641\u0644\u0641\u0644 \u0627\u062d\u0645\u0631 \u062d\u0627\u0631": 0.6,
+      "tomato": 0.7,
+      "green_bell_pepper": 0.7159090909090909,
+      "green_hot_pepper": 0.8095238095238095,
+      "eggplant": 0.8181818181818182,
+      "red_hot_pepper": 0.8666666666666667,
+      "bell_pepper": 1.0,
+      "jujube": 1.0,
+      "cabbage": 1.0,
+      "pomegranate": 1.0,
+      "pumpkin": 1.0,
+      "cantaloupe": 1.0,
+      "strawberry": 1.0,
+      "mixed_bell_pepper": 1.0
+    },
+    "risk_distribution": {
+      "1": 353,
+      "2": 48,
+      "3": 82,
+      "4": 158
+    },
+    "concentration_statistics": {
+      "mean": 120.40365678627145,
+      "median": 52.0,
+      "std": 219.9755611783617,
+      "min": 0.877,
+      "max": 2001.0
+    },
+    "high_risk_combinations": {
+      "cucumber_pyrethroid": 34,
+      "green_bell_pepper_chitin_synthesis_inhibitor": 20,
+      "zucchini_pyrethroid": 18,
+      "green_hot_pepper_chitin_synthesis_inhibitor": 12,
+      "beans_mite_control": 11,
+      "tomato_chitin_synthesis_inhibitor": 10,
+      "tomato_organophosphorus": 8,
+      "tomato_pyrethroid": 8,
+      "cucumber_chitin_synthesis_inhibitor": 8,
+      "tomato_phenylpyrazole": 7
+    },
+    "temporal_patterns": {
+      "0": 0.6515151515151515,
+      "1": 0.4807692307692308,
+      "2": 0.6533665835411472,
+      "3": 0.6475409836065574
+    }
+  },
+  "system_info": {
+    "total_training_samples": 908,
+    "training_date": "20250909_114454",
+    "pesticide_groups": 11,
+    "vegetables": 32
+  }
+}

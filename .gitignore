@@ -1,0 +1,30 @@
+db/journal/
+docker/mongodb/data/journal/
+# Virtual Environment
+venv/
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# IDE / Editor specific
+.vscode/
+.idea/
+
+# Large data or model files (Add your specific files!)
+*.pt
+*.h5
+*.onnx
+large_dataset.csv
+.env
+# data/docker/chroma_data/
+docker/data/
+src/LARS/scripts/eu_mrl_data/
+*.db
+*.duckdb
+docker/chroma_data/
+docker/data/
+src/LARS/scripts/eu_mrl_data/
+*.db
+*.duckdb

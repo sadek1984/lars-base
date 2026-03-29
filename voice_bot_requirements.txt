@@ -1,0 +1,27 @@
+# LARS Voice Assistant Requirements
+# Install with: pip install -r voice_bot_requirements.txt
+
+# Telegram Bot API
+python-telegram-bot==21.0.1
+
+# Speech-to-Text (Whisper)
+faster-whisper==1.0.3
+
+# AI Model Client
+openai==1.54.4
+
+# Data Processing
+pandas==2.2.2
+numpy==1.26.4
+
+# Database
+duckdb==1.1.3
+
+# Excel Export
+openpyxl==3.1.5
+
+# Fuzzy Matching for STT Corrections
+python-Levenshtein==0.26.0
+
+# Optional: Accelerated computations
+# ctranslate2==4.4.0

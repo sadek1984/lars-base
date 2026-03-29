@@ -1,0 +1,198 @@
+{
+  "chemical_groups": {
+    "pyrethroids": {
+      "name_en": "Pyrethroids",
+      "name_ar": "بايرثرويدات",
+      "pesticides": ["bifenthrin", "cyfluthrin", "cyhalothrin", "cypermethrin", "deltamethrin"],
+      "primary_use": "Insecticide"
+    },
+    "neonicotinoids": {
+      "name_en": "Neonicotinoids",
+      "name_ar": "نيونيكوتينويدات",
+      "pesticides": ["acetamiprid", "clothianidin", "dinotefuran", "imidacloprid", "thiamethoxam"],
+      "primary_use": "Insecticide"
+    },
+    "organophosphates": {
+      "name_en": "Organophosphates",
+      "name_ar": "فوسفات عضوية",
+      "pesticides": ["chlorpyrifos", "diazinon", "ethion", "malathion", "omethoate", "phoxim", "pirimiphos", "pirimiphos-methyl", "profenofos"],
+      "primary_use": "Insecticide"
+    },
+    "strobilurins": {
+      "name_en": "Strobilurins",
+      "name_ar": "ستروبيلورينات",
+      "pesticides": ["azoxystrobin", "pyraclostrobin", "trifloxystrobin"],
+      "primary_use": "Fungicide"
+    },
+    "triazoles_dmi": {
+      "name_en": "Triazoles (DMI)",
+      "name_ar": "ترايازول (DMI)",
+      "pesticides": ["difenoconazole", "myclobutanil", "penconazole", "propiconazole", "tebuconazole"],
+      "primary_use": "Fungicide"
+    },
+    "carbamates": {
+      "name_en": "Carbamates",
+      "name_ar": "كرباميت",
+      "pesticides": ["carbaryl", "carbofuran", "methomyl", "propamocarb"],
+      "primary_use": "Insecticide/Fungicide"
+    },
+    "benzimidazoles": {
+      "name_en": "Benzimidazoles",
+      "name_ar": "بنزيميدازول",
+      "pesticides": ["carbendazim", "thiabendazole", "thiophanate", "thiophanate-methyl", "thiopendazole"],
+      "primary_use": "Fungicide"
+    },
+    "diamides": {
+      "name_en": "Diamides",
+      "name_ar": "دياميدات",
+      "pesticides": ["chlorantraniliprole", "cyanantraniliprole"],
+      "primary_use": "Insecticide"
+    },
+    "sdhis_amides": {
+      "name_en": "SDHIs (Amides)",
+      "name_ar": "SDHIs (أميدات)",
+      "pesticides": ["boscalid", "fluopyram"],
+      "primary_use": "Fungicide"
+    },
+    "anilinopyrimidines": {
+      "name_en": "Anilinopyrimidines",
+      "name_ar": "أنيلينوبيريميدين",
+      "pesticides": ["cyprodinil", "pyrimethanil"],
+      "primary_use": "Fungicide"
+    },
+    "tetramic_tetronic_acids": {
+      "name_en": "Tetramic/Tetronic acids",
+      "name_ar": "أحماض تيتراميك وتيترونيك",
+      "pesticides": ["spiromesifen", "spirotetramate"],
+      "primary_use": "Insecticide/Acaricide"
+    },
+    "spinosyns": {
+      "name_en": "Spinosyns",
+      "name_ar": "سبينوسينات",
+      "pesticides": ["spinosad a", "spinosad d"],
+      "primary_use": "Insecticide"
+    },
+    "avermectins": {
+      "name_en": "Avermectins",
+      "name_ar": "أفيرميكتينات",
+      "pesticides": ["abamectin"],
+      "primary_use": "Insecticide/Acaricide"
+    },
+    "phenylpyrazoles": {
+      "name_en": "Phenylpyrazoles",
+      "name_ar": "فينيل بيرازول",
+      "pesticides": ["fipronil"],
+      "primary_use": "Insecticide"
+    },
+    "specific_acaricides": {
+      "name_en": "Specific Acaricides",
+      "name_ar": "مبيدات أكاروسية متخصصة",
+      "pesticides": ["bifenazate", "fenazaquin", "fenpyroximate", "hexythiazox", "etoxazole"],
+      "primary_use": "Acaricide"
+    },
+    "morpholines": {
+      "name_en": "Morpholines",
+      "name_ar": "مورفولين",
+      "pesticides": ["dimethomorph"],
+      "primary_use": "Fungicide"
+    },
+    "phenylamides": {
+      "name_en": "Phenylamides",
+      "name_ar": "فينيل أميدات",
+      "pesticides": ["metalaxyl"],
+      "primary_use": "Fungicide"
+    },
+    "phenylpyrroles": {
+      "name_en": "Phenylpyrroles",
+      "name_ar": "فينيل بيرول",
+      "pesticides": ["fludioxonil"],
+      "primary_use": "Fungicide"
+    },
+    "urea_herbicides": {
+      "name_en": "Urea Herbicides",
+      "name_ar": "يوريا",
+      "pesticides": ["linuron"],
+      "primary_use": "Herbicide"
+    },
+    "benzofurans": {
+      "name_en": "Benzofurans",
+      "name_ar": "بنزوفيوران",
+      "pesticides": ["ethofumesite"],
+      "primary_use": "Herbicide"
+    },
+    "growth_regulators": {
+      "name_en": "Others/Growth Regulators",
+      "name_ar": "منظمات نمو / أخرى",
+      "pesticides": ["buprofezin", "diflubenzuron", "pyriproxyfen"],
+      "primary_use": "IGR/Insecticide"
+    },
+    "miscellaneous": {
+      "name_en": "Miscellaneous",
+      "name_ar": "متنوع",
+      "pesticides": ["chlorfenapyr", "cyflufenamid", "cyflumetofen", "famoxadone", "fenhexamide", "flumetaquin", "flutriafol", "indoxacarb", "mandipropamid", "metrafenon", "pyridaben", "sulfoxaflor", "tricyclazole"],
+      "primary_use": "Mixed Uses"
+    },
+    "synergists_mycotoxins": {
+      "name_en": "Synergists/Mycotoxins",
+      "name_ar": "محسنات / سموم فطرية",
+      "pesticides": ["piperonyl butoxide", "afla"],
+      "primary_use": "Support/Natural"
+    }
+  },
+  "population_classes": {
+    "infants": {
+      "name_en": "Infants",
+      "name_ar": "رضع",
+      "age_range": "<1",
+      "default_weight_kg": 8.0
+    },
+    "toddlers": {
+      "name_en": "Toddlers",
+      "name_ar": "صغار الأطفال",
+      "age_range": "1-<3",
+      "default_weight_kg": 12.0
+    },
+    "other_children": {
+      "name_en": "Other Children",
+      "name_ar": "أطفال آخرون",
+      "age_range": "3-<10",
+      "default_weight_kg": 23.0
+    },
+    "adolescents": {
+      "name_en": "Adolescents",
+      "name_ar": "مراهقون",
+      "age_range": "10-<18",
+      "default_weight_kg": 53.0
+    },
+    "adults": {
+      "name_en": "Adults",
+      "name_ar": "بالغون",
+      "age_range": "18-<65",
+      "default_weight_kg": 70.0
+    },
+    "elderly": {
+      "name_en": "Elderly",
+      "name_ar": "كبار السن",
+      "age_range": "65-<75",
+      "default_weight_kg": 68.0
+    },
+    "very_elderly": {
+      "name_en": "Very Elderly",
+      "name_ar": "كبار السن جداً",
+      "age_range": ">=75",
+      "default_weight_kg": 65.0
+    },
+    "pregnant_women": {
+      "name_en": "Pregnant Women",
+      "name_ar": "نساء حوامل",
+      "age_range": "15-45",
+      "default_weight_kg": 65.0
+    },
+    "lactating_women": {
+      "name_en": "Lactating Women",
+      "name_ar": "نساء مرضعات",
+      "age_range": "28-39",
+      "default_weight_kg": 65.0
+    }
+  }
+}
