@@ -227,8 +227,24 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         self.arabic_pesticide_map = PESTICIDE_AR_TO_EN
     
     def _get_connection(self) -> duckdb.DuckDBPyConnection:
-        """Get database connection"""
-        return duckdb.connect(self.db_path, read_only=True)
+        """Return a read-only DuckDB connection.
+
+        Raises RuntimeError with a user-readable message if the database
+        file is missing or the connection fails, instead of propagating a
+        cryptic DuckDB exception.
+        """
+        db_path = Path(self.db_path)
+        if not db_path.exists():
+            raise RuntimeError(
+                f"Database file not found: {db_path}\n"
+                "Upload your data via the Data Management page to continue."
+            )
+        try:
+            return duckdb.connect(str(db_path), read_only=True)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Could not open database '{db_path.name}': {exc}"
+            ) from exc
     
     def _build_sample_filter(self, samples: List[str]) -> str:
         """
@@ -781,7 +797,12 @@ class CoreQueryEngine(AdvancedHandlersMixin):
                     return result
 
         # ── Tier 3: Keyword pattern cascade ───────────────────────────────────
-        result = self._dispatch_keyword_patterns(ctx)
+        try:
+            result = self._dispatch_keyword_patterns(ctx)
+        except RuntimeError as db_err:
+            # DB missing or corrupt — show a clear message instead of a stack trace
+            logging.error(f"DB connection error during query: {db_err}")
+            return str(db_err), None
         if result is not None:
             return result
 

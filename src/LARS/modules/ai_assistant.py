@@ -836,9 +836,12 @@ Generate ONLY the Python code wrapped in ```python``` markers:"""
                     response = model.generate_content(prompt)
                     generated_text = response.text
             except Exception as gen_error:
-                # If DeepSeek model name fails, try a generic one or fallback
-                st.error(f"Generation failed: {gen_error}")
-                raise gen_error
+                logging.error(f"LLM generation failed: {gen_error}")
+                st.warning(
+                    "⚠️ AI assistant is temporarily unavailable. "
+                    "Please try again in a moment, or rephrase your question."
+                )
+                return
 
             code_match = re.search(r'```python\n(.*?)```', generated_text, re.DOTALL)
             
