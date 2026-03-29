@@ -449,18 +449,20 @@ class RiskAssessmentService:
     ) -> float:
         """
         Calculate Estimated Daily Intake (EDI).
-        
+
+        Delegates to RiskAssessmentConfig.calculate_edi() — single formula source.
+
         Parameters:
             residue_concentration: Pesticide concentration in food (mg/kg)
             consumption_rate: Food consumption rate (kg/day)
             body_weight: Body weight (kg)
-        
+
         Returns:
             EDI in mg/kg bw/day
         """
-        if body_weight <= 0:
-            raise ValueError("Body weight must be positive")
-        return (residue_concentration * consumption_rate) / body_weight
+        return RiskAssessmentConfig.calculate_edi(
+            residue_concentration, consumption_rate, body_weight
+        )
     
     def calculate_hqc(
         self,
@@ -491,14 +493,15 @@ class RiskAssessmentService:
         edi = self.calculate_edi(residue_concentration, consumption_rate, body_weight)
         hqc = edi / adi_info['value']
         
-        # Determine risk interpretation
-        if hqc >= 1.0:
+        # Determine risk interpretation using shared thresholds from RiskAssessmentConfig
+        _t = RiskAssessmentConfig.RISK_THRESHOLDS
+        if hqc >= _t["moderate_concern"]:
             interpretation = "⚠️ Risk unacceptable (HQc ≥ 1)"
             interpretation_ar = "⚠️ خطر غير مقبول"
-        elif hqc >= 0.5:
+        elif hqc >= _t["low_concern"]:
             interpretation = "⚡ Elevated risk (0.5 ≤ HQc < 1)"
             interpretation_ar = "⚡ خطر مرتفع"
-        elif hqc >= 0.1:
+        elif hqc >= _t["acceptable"]:
             interpretation = "⚠ Moderate risk (0.1 ≤ HQc < 0.5)"
             interpretation_ar = "⚠ خطر متوسط"
         else:

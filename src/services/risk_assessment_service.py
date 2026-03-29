@@ -144,9 +144,9 @@ class RiskAssessmentService:
         
         # Unit conversion: ppb to mg/kg
         concentration_mg_kg = concentration_ppb / 1000
-        
-        # Calculate EDI (Estimated Daily Intake)
-        edi = (concentration_mg_kg * food_intake) / body_weight
+
+        # Calculate EDI (Estimated Daily Intake) — formula lives in RiskAssessmentConfig
+        edi = self.config.calculate_edi(concentration_mg_kg, food_intake, body_weight)
         
         # Calculate risk percentage
         risk_percentage = (edi / adi) * 100

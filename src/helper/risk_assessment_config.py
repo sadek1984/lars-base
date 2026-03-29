@@ -209,6 +209,17 @@ class RiskAssessmentConfig:
         "Default": 0.1111,
     }
     
+    # ========================================================================
+    # RISK THRESHOLDS (EDI/ADI ratio — PRIMo 4 / standard HRA)
+    # Source: WHO/EFSA HQc interpretation scale
+    # ========================================================================
+    RISK_THRESHOLDS: Dict[str, float] = {
+        "acceptable":       0.1,   # ratio ≤ 0.1 → no concern
+        "low_concern":      0.5,   # 0.1 < ratio ≤ 0.5 → low concern
+        "moderate_concern": 1.0,   # 0.5 < ratio ≤ 1.0 → moderate concern
+        # ratio > 1.0 → high concern / unacceptable
+    }
+
     # Arabic to English commodity mapping
     COMMODITY_MAPPING: Dict[str, str] = {
         'طماطم': 'Tomato',
@@ -229,7 +240,11 @@ class RiskAssessmentConfig:
         'خضروات': 'Total Vegetables',
         'فواكه': 'Total Fruits',
     }
-    
+
+    # Backward-compatible aliases (referenced in services/risk_assessment_service.py)
+    FOOD_NAME_MAPPING = COMMODITY_MAPPING
+    SAUDI_FOOD_INTAKE  = SAUDI_INGESTION_RATES
+
     # ========================================================================
     # POPULATION PROFILES
     # ========================================================================
@@ -457,5 +472,22 @@ class RiskAssessmentConfig:
         for key, pop_rates in cls.DETAILED_INGESTION_RATES.items():
             if key.lower() == commodity.lower():
                 return [pop for pop, rate in pop_rates.items() if rate is not None]
-        
+
         return []
+
+    @staticmethod
+    def calculate_edi(
+        concentration_mg_kg: float,
+        intake_kg_day: float,
+        body_weight_kg: float,
+    ) -> float:
+        """
+        Calculate Estimated Daily Intake (EDI).
+
+        EDI (mg/kg bw/day) = (residue concentration × daily food intake) / body weight
+
+        Source: PRIMo 4 / IESTI model
+        """
+        if body_weight_kg <= 0:
+            raise ValueError("Body weight must be positive")
+        return (concentration_mg_kg * intake_kg_day) / body_weight_kg
