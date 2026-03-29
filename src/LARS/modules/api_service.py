@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 import streamlit as st
 import requests
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
 API_BASE_URL = "http://127.0.0.1:8000"
 API_HEADERS = {
@@ -118,3 +120,48 @@ def get_api_client():
     if 'api_client' not in st.session_state:
         st.session_state.api_client = APIClient()
     return st.session_state.api_client
+
+
+# ============================================================================
+# SESSION STATE  (merged from session.py)
+# ============================================================================
+
+_SESSION_DEFAULTS: Dict[str, Any] = {
+    "chat_messages": [
+        {
+            "role": "assistant",
+            "content": (
+                "👋 Hello! I'm your **pesticide analysis AI assistant** — "
+                "ready to help you explore, assess, and analyze pesticide "
+                "data with ease.\n\n"
+                "💬 **Type your question below and I'll analyze the data "
+                "for you** 🚀"
+            ),
+        }
+    ],
+    "selected_year": DEFAULT_YEAR,
+    "indexed_years": set(),
+    "project_id": "default_project",
+    "intro_shown": False,
+    "current_page": "🏠 Dashboard Overview",
+    "data_loaded": False,
+}
+
+
+def initialize_session_state(
+    extra_defaults: Dict[str, Any] | None = None,
+) -> None:
+    """Ensure all required session-state keys exist.
+
+    Only sets a key if it is not already present, preserving any values
+    that were set during the current session.
+
+    Args:
+        extra_defaults: Optional additional defaults to register (e.g.,
+            page-specific state). Merged with _SESSION_DEFAULTS;
+            extra_defaults takes precedence on conflict.
+    """
+    merged = {**_SESSION_DEFAULTS, **(extra_defaults or {})}
+    for key, value in merged.items():
+        if key not in st.session_state:
+            st.session_state[key] = value

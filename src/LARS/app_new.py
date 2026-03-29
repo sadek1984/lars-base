@@ -25,12 +25,11 @@ import streamlit as st
 import logging
 
 # ── Internal modules ────────────────────────────────────────────
-from modules.api_service import API_BASE_URL, get_api_client
+from modules.api_service import API_BASE_URL, get_api_client, initialize_session_state
 from modules.dashboard import show_dashboard_overview
 from modules.env_loader import load_env
 from modules.predictions import show_predictions_page
 from modules.risk_analysis import show_risk_analysis_page
-from modules.session import initialize_session_state
 from modules.statistical_insights import show_statistical_insights_page
 from modules.trend_analysis import show_trend_analysis_page
 
