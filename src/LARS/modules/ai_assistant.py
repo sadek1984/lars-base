@@ -1679,24 +1679,20 @@ def load_chemical_groups_to_duckdb(con):
         print(f"Warning: Failed to load pesticide groups to DuckDB: {e}")
 
 def get_duckdb_connection():
-    """Get DuckDB connection to the LARS database and load helper tables"""
-    db_path = Path(__file__).parent.parent / 'data' / 'lars_data.duckdb'
-    if not db_path.exists():
+    """Get DuckDB read-only connection. Delegates path resolution to data_access."""
+    from modules.data_access import get_duckdb_read, _DUCKDB_PATH
+    if not _DUCKDB_PATH.exists():
         return None
-        
-    con = duckdb.connect(str(db_path), read_only=True)
-    
-    # Load chemical classification into a temporary table for joins
+    con = get_duckdb_read()
     load_chemical_groups_to_duckdb(con)
-    
     return con
 
 def get_duckdb_connection_write():
-    """Get DuckDB connection to the LARS database with write access"""
-    db_path = Path(__file__).parent.parent / 'data' / 'lars_data.duckdb'
-    if not db_path.exists():
+    """Get DuckDB write connection. Delegates path resolution to data_access."""
+    from modules.data_access import get_duckdb_write, _DUCKDB_PATH
+    if not _DUCKDB_PATH.exists():
         return None
-    con = duckdb.connect(str(db_path), read_only=False)
+    con = get_duckdb_write()
     load_chemical_groups_to_duckdb(con)
     return con
 

@@ -25,6 +25,7 @@ from modules.mappings import (
     SAMPLE_EN_TO_AR,
     NEIGHBORHOOD_CORRECTIONS,
     PESTICIDE_AR_TO_EN,
+    CATEGORY_EN,
     normalize_arabic_query,
     get_pesticide_variants,
     get_pesticide_sql_filter,
@@ -48,8 +49,8 @@ except ImportError:
     Intent = None
     QueryEntities = None
 
-# Database path
-DB_PATH = Path(__file__).parent.parent / "data" / "lars_data.duckdb"
+# Database path — delegate to data_access so all modules use the same resolution
+from modules.data_access import _DUCKDB_PATH as DB_PATH
 
 # LLM Configuration
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
@@ -271,15 +272,8 @@ class CoreQueryEngine(AdvancedHandlersMixin):
                 remaining_lower = remaining_lower.replace(key, " " * len(key), 1)
 
         # Category expansion — uses English "نوع العينة" values from DB
+        # CATEGORY_EN imported from modules.mappings — single source of truth
         if not detected:
-            CATEGORY_EN = {
-                "vegetable": "Vegetables", "vegetables": "Vegetables",
-                "fruit": "Fruits", "fruits": "Fruits",
-                "spice": "Spices", "spices": "Spices",
-                "nut": "Nuts", "nuts": "Nuts",
-                "grain": "Grains", "grains": "Grains",
-                "leafy": "Leafy Greens", "dates": "Dates"
-            }
             matched_cat = None
             for kw, cat in CATEGORY_EN.items():
                 if kw in query_lower:

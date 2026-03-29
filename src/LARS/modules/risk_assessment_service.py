@@ -730,10 +730,20 @@ class RiskAssessmentService:
 # CONVENIENCE FUNCTIONS
 # ============================================================================
 
-@lru_cache(maxsize=1)
+_risk_service_instance: Optional[RiskAssessmentService] = None
+
 def get_risk_service() -> RiskAssessmentService:
-    """Get singleton instance of RiskAssessmentService."""
-    return RiskAssessmentService()
+    """Return the shared RiskAssessmentService instance (singleton).
+
+    RiskAssessmentService.__init__ loads an Excel ADI file and a JSON
+    chemical classification file from disk.  Creating a new instance on
+    every call reloads both files for every query.  A module-level
+    singleton avoids that repeated I/O while keeping the API identical.
+    """
+    global _risk_service_instance
+    if _risk_service_instance is None:
+        _risk_service_instance = RiskAssessmentService()
+    return _risk_service_instance
 
 
 def quick_hqc(

@@ -19,6 +19,8 @@ import logging
 from typing import List, Optional, Tuple
 import pandas as pd
 
+from modules.mappings import CATEGORY_AR
+
 
 class AdvancedHandlersMixin:
     """
@@ -315,14 +317,7 @@ class AdvancedHandlersMixin:
         con = self._get_connection()
 
         # Build sample filter from category or explicit samples
-        CATEGORY_AR = {
-            "vegetable": ["طماطم", "خيار", "كوسة", "فلفل", "باذنجان", "فاصوليا", "بامية", "بطاطس", "جزر", "بصل"],
-            "fruit":     ["فراولة", "عنب", "تفاح", "برتقال", "رمان", "كمثرى", "ليمون", "توت", "تمر"],
-            "spice":     ["هيل", "كمون", "زعتر", "توابل", "بهارات", "قرنفل", "يانسون", "شمر", "كزبرة"],
-            "nut":       ["فستق", "مكسرات", "لوز", "كاجو", "بندق", "بيكان", "سمسم", "فول سوداني"],
-            "grain":     ["قمح", "رز", "ذرة", "عدس", "دقيق", "شوفان"],
-            "leafy":     ["خس", "بقدونس", "سبانخ", "جرجير", "نعناع", "ملوخية", "شبت", "كزبرة"],
-        }
+        # CATEGORY_AR imported from modules.mappings — single source of truth
 
         if samples:
             conditions = [f"\"اسم العينة\" LIKE '%{s}%'" for s in samples]
@@ -559,14 +554,7 @@ class AdvancedHandlersMixin:
         """
         con = self._get_connection()
 
-        CATEGORY_AR = {
-            "vegetable": ["طماطم", "خيار", "كوسة", "فلفل", "باذنجان", "فاصوليا", "بامية", "بطاطس", "جزر", "بصل"],
-            "fruit":     ["فراولة", "عنب", "تفاح", "برتقال", "رمان", "كمثرى", "ليمون", "توت", "تمر"],
-            "spice":     ["هيل", "كمون", "زعتر", "توابل", "بهارات", "قرنفل", "يانسون", "شمر", "كزبرة", "فلفل اسود"],
-            "nut":       ["فستق", "مكسرات", "لوز", "كاجو", "بندق", "بيكان", "سمسم", "فول سوداني"],
-            "grain":     ["قمح", "رز", "ذرة", "عدس", "دقيق", "شوفان"],
-            "leafy":     ["خس", "بقدونس", "سبانخ", "جرجير", "نعناع", "ملوخية", "شبت"],
-        }
+        # CATEGORY_AR imported from modules.mappings — single source of truth
 
         if samples:
             conditions = [f"\"اسم العينة\" LIKE '%{s}%'" for s in samples]

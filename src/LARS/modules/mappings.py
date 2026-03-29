@@ -911,3 +911,39 @@ def normalize_neighborhood(name: str) -> str:
         Canonical neighbourhood name.
     """
     return NEIGHBORHOOD_CORRECTIONS.get(name.strip(), name.strip())
+
+
+# ============================================================
+# FOOD CATEGORY MEMBERSHIP
+# Single source of truth for category → sample name lists.
+# Used by advanced_handlers.py and core_query_engine.py.
+# ============================================================
+
+# English category key → list of canonical Arabic sample names stored in DB.
+# This is the union of the two previously divergent inline dicts in
+# advanced_handlers._handle_category_pesticide and _handle_category_limit_summary.
+CATEGORY_AR: Dict[str, List[str]] = {
+    "vegetable": ["طماطم", "خيار", "كوسة", "فلفل", "باذنجان", "فاصوليا", "بامية", "بطاطس", "جزر", "بصل"],
+    "fruit":     ["فراولة", "عنب", "تفاح", "برتقال", "رمان", "كمثرى", "ليمون", "توت", "تمر"],
+    "spice":     ["هيل", "كمون", "زعتر", "توابل", "بهارات", "قرنفل", "يانسون", "شمر", "كزبرة", "فلفل اسود"],
+    "nut":       ["فستق", "مكسرات", "لوز", "كاجو", "بندق", "بيكان", "سمسم", "فول سوداني"],
+    "grain":     ["قمح", "رز", "ذرة", "عدس", "دقيق", "شوفان"],
+    "leafy":     ["خس", "بقدونس", "سبانخ", "جرجير", "نعناع", "ملوخية", "شبت", "كزبرة"],
+}
+
+# English query keyword → "نوع العينة" DB value used in _detect_sample_types().
+# Add plural forms alongside singular so queries like "vegetables" match.
+CATEGORY_EN: Dict[str, str] = {
+    "vegetable":  "Vegetables",
+    "vegetables": "Vegetables",
+    "fruit":      "Fruits",
+    "fruits":     "Fruits",
+    "spice":      "Spices",
+    "spices":     "Spices",
+    "nut":        "Nuts",
+    "nuts":       "Nuts",
+    "grain":      "Grains",
+    "grains":     "Grains",
+    "leafy":      "Leafy Greens",
+    "dates":      "Dates",
+}
