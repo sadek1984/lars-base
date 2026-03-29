@@ -577,8 +577,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ============================================================
 
 if __name__ == '__main__':
-    TOKEN = "8393315665:AAG82MK45WQfIpn054HdoyxZK4rGtZLsL-A"
-    
+    TOKEN = TELEGRAM_TOKEN
     app = ApplicationBuilder().token(TOKEN).build()
     
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
