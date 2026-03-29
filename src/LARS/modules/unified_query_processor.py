@@ -2,6 +2,13 @@
 unified_query_processor.py
 =========================
 معالج استعلامات هجين متعدد الطبقات
+
+⚠️  DEPRECATED — do not add new logic here.
+    This module duplicates CoreQueryEngine (core_query_engine.py), which is
+    the single canonical query processor.  All new query handling belongs in
+    CoreQueryEngine.  This file is kept only to avoid breaking any callers
+    that still import UnifiedQueryProcessor; they should be migrated to use
+    CoreQueryEngine.process_with_gemini_fallback() instead.
 """
 import re
 import duckdb

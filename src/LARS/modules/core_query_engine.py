@@ -2474,6 +2474,211 @@ SQL:"""
 
         return response, df
 
+    # ============================================================
+    # LLM SQL Generation (Gemini / GPT / Ollama Fallback)
+    # ============================================================
+
+    def _get_schema_info(self) -> str:
+        """Return DB schema as a formatted string for LLM prompting (schema-only, no data)."""
+        try:
+            con = self._get_connection()
+            cols = con.execute("DESCRIBE chemistry_tidy").df()
+            con.close()
+        except Exception as exc:
+            logging.warning(f"Schema fetch failed: {exc}")
+            return (
+                "Table: chemistry_tidy — key columns: كود العينة, اسم العينة, "
+                "pesticide_name, concentration, limit_value, is_above_limit, "
+                "is_detected, sample_result, الحى, نوع العينة"
+            )
+
+        DESCRIPTIONS: Dict[str, str] = {
+            "كود العينة":       "Sample code (unique identifier)",
+            "اسم العينة":       "Sample name in English (Tomato, Cucumber, Cardamom, …)",
+            "نوع العينة":       "Category: Vegetables / Fruits / Spices / Nuts / Grains",
+            "الحى":             "Neighborhood name (Arabic)",
+            "اسم المنشاة":      "Establishment / facility name",
+            "التاريخ":          "Sample date (TIMESTAMP)",
+            "pesticide_name":   "Pesticide name in English",
+            "concentration":    "Measured concentration (DOUBLE)",
+            "limit_value":      "Maximum Residue Limit – MRL (DOUBLE)",
+            "exceedance_ratio": "concentration / limit_value",
+            "is_above_limit":   "1 = above MRL, 0 = within MRL",
+            "is_compliant":     "1 = compliant, 0 = non-compliant (lab judgment)",
+            "is_detected":      "1 = detected, 0 = not detected",
+            "sample_result":    "Lab verdict: 'Compliant' | 'Non-Compliant'",
+        }
+
+        lines = [
+            "**Table: chemistry_tidy**",
+            "| Column | Type | Description |",
+            "|--------|------|-------------|",
+        ]
+        for _, row in cols.iterrows():
+            col = row["column_name"]
+            lines.append(f"| {col} | {row['column_type']} | {DESCRIPTIONS.get(col, '')} |")
+        return "\n".join(lines)
+
+    def _build_llm_sql_prompt(
+        self,
+        query: str,
+        detected_samples: List[str],
+        detected_neighborhoods: List[str],
+        detected_pesticide: Optional[str],
+    ) -> str:
+        """Build the schema-only SQL prompt for Gemini / GPT / Ollama."""
+        schema = self._get_schema_info()
+        return f"""Generate a DuckDB SQL query to answer the following question about a pesticide testing database.
+
+\U0001f512 Schema (metadata only — no actual data exposed):
+{schema}
+
+RULES:
+1. Always quote Arabic column names in double quotes: `"كود العينة"`
+2. Use COUNT(DISTINCT "كود العينة") to count unique samples
+3. Use ILIKE for case-insensitive text matching
+4. DuckDB syntax only — no MySQL/Postgres extensions
+5. Limit results to 100 rows unless the question asks for all
+6. "اسم العينة" stores ENGLISH names: Tomato, Cucumber, Pepper, Cardamom, Pistachios, …
+7. "الحى" stores Arabic neighborhood names
+
+Detected entities:
+- Samples       : {detected_samples or 'None'}
+- Neighborhoods : {detected_neighborhoods or 'None'}
+- Pesticide     : {detected_pesticide or 'None'}
+
+Arabic ↔ English quick map:
+طماطم→Tomato  خيار→Cucumber  فلفل→Pepper  باذنجان→Eggplant  كوسة→Zucchini
+كمون→Cumin  هيل→Cardamom  فستق→Pistachios  زعتر→Thyme
+فوق الحد / تجاوز     → is_above_limit = 1
+تحت الحد / ضمن الحد  → is_above_limit = 0
+غير مطابق / راسب     → sample_result LIKE '%Non-Compliant%'
+مطابق / ناجح          → sample_result LIKE '%Compliant%' AND sample_result NOT LIKE '%Non%'
+البايفنثرن→Bifenthrin  الكلوربيريفوس→Chlorpyrifos  الإيميداكلوبريد→Imidacloprid
+الأباميكتين→Abamectin  الثيامثوكسام→Thiamethoxam  الفيبرونيل→Fipronil
+
+Question: {query}
+
+Generate ONLY the SQL wrapped in ```sql``` markers:"""
+
+    def process_with_gemini_fallback(
+        self,
+        query: str,
+        llm_model: Any = None,
+    ) -> Tuple[str, Optional[Any], Optional[str]]:
+        """
+        Full query processing with LLM SQL generation as a fallback.
+
+        Processing order:
+          Tier 1 — Pattern matching + intent routing  (self.process)
+          Tier 2 — LLM SQL generation (Gemini / GPT / Ollama)
+
+        Returns:
+            (response_text, dataframe_or_None, generated_sql_or_None)
+
+        The third element lets the caller display a "View SQL" expander.
+        """
+        # ── Tier 1: existing pattern / intent routing ──
+        response_text, df = self.process(query)
+
+        is_unknown = (
+            "Sorry, I couldn't fully understand" in response_text
+            or "لم أتمكن من فهم" in response_text
+        )
+
+        if not is_unknown:
+            return response_text, df, None
+
+        # ── Tier 2: LLM SQL generation ──
+        active_llm = llm_model if llm_model is not None else self.llm_client
+        if active_llm is None:
+            return response_text, None, None
+
+        detected_samples       = self._detect_sample_types(query)
+        detected_neighborhoods = self._detect_neighborhoods(query)
+        detected_pesticide     = self._detect_pesticide(query)
+
+        prompt = self._build_llm_sql_prompt(
+            query, detected_samples, detected_neighborhoods, detected_pesticide
+        )
+
+        generated_sql: Optional[str] = None
+        try:
+            # Determine which LLM interface to use
+            if llm_model is not None:
+                if hasattr(llm_model, "chat") and hasattr(llm_model.chat, "completions"):
+                    # OpenAI-compatible (GPT / local Ollama via openai SDK)
+                    model_name = getattr(self, "_llm_model_name", "gpt-4o-mini")
+                    resp = llm_model.chat.completions.create(
+                        model=model_name,
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": "You are a SQL expert. Return ONLY valid DuckDB SQL.",
+                            },
+                            {"role": "user", "content": prompt},
+                        ],
+                        temperature=0.0,
+                    )
+                    generated_text = resp.choices[0].message.content
+                else:
+                    # Gemini (google.generativeai GenerativeModel)
+                    generated_text = llm_model.generate_content(prompt).text
+            else:
+                # Ollama client (self.llm_client)
+                resp = self.llm_client.chat(
+                    model=OLLAMA_MODEL,
+                    messages=[{"role": "user", "content": prompt}],
+                    options={"temperature": 0.1},
+                )
+                generated_text = resp["message"]["content"]
+
+            # ── Extract SQL from response ──
+            sql_match = re.search(
+                r"```sql\n?(.*?)```", generated_text, re.DOTALL | re.IGNORECASE
+            ) or re.search(r"```\n?(.*?)```", generated_text, re.DOTALL)
+
+            if sql_match:
+                generated_sql = sql_match.group(1).strip()
+            else:
+                generated_sql = generated_text.replace("```", "").strip()
+
+            if not generated_sql.upper().startswith("SELECT"):
+                logging.warning("LLM returned non-SELECT SQL — skipping execution")
+                return response_text, None, generated_sql
+
+            # ── Execute SQL ──
+            con = self._get_connection()
+            try:
+                df = con.execute(generated_sql).df()
+            except Exception as sql_err:
+                logging.warning(f"LLM SQL execution failed: {sql_err}")
+                con.close()
+                return (
+                    f"❌ AI-generated SQL had an error: `{sql_err}`\n\n"
+                    "Try rephrasing your question.",
+                    None,
+                    generated_sql,
+                )
+            con.close()
+
+            if not df.empty:
+                response_text = (
+                    f"🤖 **AI-generated result ({len(df)} rows):**\n\n"
+                    + df.head(50).to_markdown(index=False)
+                )
+            else:
+                response_text = (
+                    "⚠️ The query ran successfully but returned no results. "
+                    "Try rephrasing."
+                )
+
+            return response_text, df, generated_sql
+
+        except Exception as exc:
+            logging.error(f"LLM fallback failed: {exc}")
+            return response_text, None, generated_sql
+
     def _handle_unknown_query(self, query: str) -> str:
         """Handle unknown queries"""
         response = "⚠️ **Sorry, I couldn't fully understand your question.**\n\n"
