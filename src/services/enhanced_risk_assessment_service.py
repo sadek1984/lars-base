@@ -1,20 +1,27 @@
-
-
 import numpy as np
 import pandas as pd
 from scipy import stats
 from typing import Dict, List, Tuple
 from scipy.stats import norm, lognorm
-from scipy.special import beta 
+from scipy.special import beta
 from scipy.stats import kstest, anderson, norm, lognorm, gamma, weibull_min
 import warnings
 
+from services.risk_assessment_service import RiskAssessmentService
 
-class EnhancedRiskAssessment:
-    """Enhanced risk assessment with Monte Carlo and Bayesian methods"""
-    
+
+class EnhancedRiskAssessment(RiskAssessmentService):
+    """
+    Enhanced risk assessment extending RiskAssessmentService with Monte Carlo
+    and Bayesian probabilistic methods.
+
+    Inherits: assess_sample_risk(), assess_dataframe_risk(), and the shared
+    RiskAssessmentConfig.calculate_edi() formula via the parent class.
+    """
+
     def __init__(self, historical_data_path: str):
         """Initialize with historical data"""
+        super().__init__()
         self.df = pd.read_excel('./data/processed_data_output.xlsx')
         self.df['document_date'] = pd.to_datetime(self.df['document_date'])
         

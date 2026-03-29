@@ -381,8 +381,8 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         con.close()
         
         if not df.empty:
-            unique_samples = df['sample_code'].nunique()
-            above_limit    = len(df[df['status'] == 'Above limit'])
+            unique_samples = df['sample_code'].nunique() if 'sample_code' in df.columns else len(df)
+            above_limit    = len(df[df['status'] == 'Above limit']) if 'status' in df.columns else 0
             
             response = f"🏭 **Facility search results: {facility_name}**\n\n"
             response += f"✅ Unique samples: **{unique_samples}**\n"
@@ -474,12 +474,12 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         
         df = con.execute(sql).df()
         con.close()
-        
+
         if not df.empty:
-            total       = int(df['total_count'].sum())
-            total_above = int(df['above_limit'].sum())
-            total_below = int(df['below_limit'].sum())
-            total_clean = int(df['pesticide_free'].sum())
+            total       = int(df['total_count'].sum())    if 'total_count'    in df.columns else len(df)
+            total_above = int(df['above_limit'].sum())    if 'above_limit'    in df.columns else 0
+            total_below = int(df['below_limit'].sum())    if 'below_limit'    in df.columns else 0
+            total_clean = int(df['pesticide_free'].sum()) if 'pesticide_free' in df.columns else 0
             
             response = f"📊 **Comprehensive Analysis — {category_name} in {hood_display}**\n\n"
             response += f"✅ **Total samples:** {total}\n"
@@ -707,65 +707,111 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         
         return None  # UNKNOWN → falls through to patterns/LLM
     
-    def process(self, query: str) -> Tuple[str, Optional[pd.DataFrame]]:
+    def _extract_context(self, query: str) -> dict:
         """
-        معالجة الاستعلام وإرجاع (نص الاستجابة, DataFrame)
+        Normalize the query and detect all entities (samples, neighborhoods, pesticide).
+
+        Strips category sentinels (__cat__<key>) from detected_samples so that
+        standard handlers always receive concrete sample names. The sentinel is
+        preserved separately as 'category_key' for handlers that need it (e.g.
+        Pattern 1B / violations-threshold).
+
+        Returns a context dict consumed by process() routing tiers.
         """
         query_normalized = self._normalize_query(query)
         query_lower = query_normalized.lower()
-        
+
         detected_samples_raw = self._detect_sample_types(query)
         detected_neighborhoods = self._detect_neighborhoods(query)
         detected_pesticide = self._detect_pesticide(query)
 
-        # Strip category sentinels (__cat__<key>) from the list that's passed to
-        # all standard handlers — they only understand concrete Arabic sample names.
-        # The raw list (with sentinels) is used by Pattern 1B / violations-threshold.
-        _detected_category_key = None
+        category_key = None
         detected_samples = []
         for s in detected_samples_raw:
             if s.startswith("__cat__"):
-                _detected_category_key = s.replace("__cat__", "")
+                category_key = s.replace("__cat__", "")
             else:
                 detected_samples.append(s)
-        
-        # ============================================================
-        # NEW: Semantic Pattern Recognition (First Priority)
-        # Uses embeddings to understand query intent semantically
-        # Falls back to keyword matching if confidence is low
-        # ============================================================
+
+        return {
+            'query': query,
+            'query_normalized': query_normalized,
+            'query_lower': query_lower,
+            'detected_samples': detected_samples,
+            'detected_samples_raw': detected_samples_raw,
+            'detected_neighborhoods': detected_neighborhoods,
+            'detected_pesticide': detected_pesticide,
+            'category_key': category_key,
+        }
+
+    def process(self, query: str) -> Tuple[str, Optional[pd.DataFrame]]:
+        """
+        Process a query and return (response_text, DataFrame | None).
+
+        Three-tier routing, in priority order:
+          1. Semantic pattern recognition  — embedding-based, confidence ≥ 0.75
+          2. Intent-based routing          — entity extraction + intent classifier
+          3. Keyword pattern cascade       — _dispatch_keyword_patterns()
+        """
+        ctx = self._extract_context(query)
+        query_normalized = ctx['query_normalized']
+        query_lower      = ctx['query_lower']
+        detected_samples      = ctx['detected_samples']
+        detected_neighborhoods = ctx['detected_neighborhoods']
+        detected_pesticide    = ctx['detected_pesticide']
+
+        # ── Tier 1: Semantic pattern recognition ──────────────────────────────
         if self.semantic_recognizer:
             semantic_result = self.semantic_recognizer.recognize(query)
             if semantic_result and semantic_result['confidence'] >= 0.75:
                 pattern_type = semantic_result['pattern_type']
                 logging.debug(f"Semantic match: {pattern_type} ({semantic_result['confidence']:.2f})")
-                
-                # Route to appropriate handler based on semantic pattern
                 result = self._route_by_semantic_pattern(
                     pattern_type, query, query_normalized, query_lower,
                     detected_samples, detected_neighborhoods, detected_pesticide
                 )
                 if result is not None:
                     return result
-        
-        # ============================================================
-        # NEW: Intent-Based Router (Second Priority)
-        # Flexible intent+entity matching that handles query variations.
-        # Falls back to pattern matching if intent is UNKNOWN.
-        # ============================================================
+
+        # ── Tier 2: Intent-based routing ──────────────────────────────────────
         if self.router:
             intent, entities = self.router.analyze(query)
-            
             if intent != Intent.UNKNOWN:
-                logging.info(f"🎯 Intent: {intent.name} | samples={entities.samples} "
-                             f"neighborhoods={entities.neighborhoods} category={entities.category} "
-                             f"pesticide={entities.pesticide}")
-                
+                logging.info(
+                    f"🎯 Intent: {intent.name} | samples={entities.samples} "
+                    f"neighborhoods={entities.neighborhoods} category={entities.category} "
+                    f"pesticide={entities.pesticide}"
+                )
                 result = self._dispatch_by_intent(intent, entities)
                 if result is not None:
                     return result
-        
-        
+
+        # ── Tier 3: Keyword pattern cascade ───────────────────────────────────
+        result = self._dispatch_keyword_patterns(ctx)
+        if result is not None:
+            return result
+
+        return self._handle_unknown_query(query), None
+
+    def _dispatch_keyword_patterns(
+        self, ctx: dict
+    ) -> Optional[Tuple[str, Optional[pd.DataFrame]]]:
+        """
+        Tier 3: Keyword-based pattern matching cascade.
+
+        Checks patterns 0–14 in priority order and returns the first match, or
+        None to signal that no pattern matched (process() falls back to
+        _handle_unknown_query).
+        """
+        query              = ctx['query']
+        query_normalized   = ctx['query_normalized']
+        query_lower        = ctx['query_lower']
+        detected_samples      = ctx['detected_samples']
+        detected_samples_raw  = ctx['detected_samples_raw']
+        detected_neighborhoods = ctx['detected_neighborhoods']
+        detected_pesticide    = ctx['detected_pesticide']
+        _detected_category_key = ctx['category_key']
+
         # ============================================================
         # Pattern 0: Comprehensive neighborhood + sample type analysis
         # "what are the types of spices in al_iskan and how many above/below limit"
@@ -799,8 +845,6 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             return self._handle_comprehensive_neighborhood(query, detected_samples, detected_neighborhoods)
         
         # Continue with other patterns if not comprehensive
-        con = self._get_connection()
-        
         # ============================================================
         # Pattern 1: Samples with N pesticides (supports multiple counts)
         # ============================================================
@@ -1168,8 +1212,10 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             if llm_response[0]:
                 return llm_response
         
-        # Default: Unknown query
-        return self._handle_unknown_query(query), None
+
+        return None
+
+
     
     # ============================================================
     # Handlers
@@ -1400,9 +1446,9 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             type_display += f" in {' + '.join(neighborhoods)}"
         
         if not df.empty:
-            total_samples = int(df['sample_count'].sum())
-            total_above   = int(df['above_limit'].sum())
-            total_below   = int(df['below_limit'].sum())
+            total_samples = int(df['sample_count'].sum()) if 'sample_count' in df.columns else len(df)
+            total_above   = int(df['above_limit'].sum())  if 'above_limit'  in df.columns else 0
+            total_below   = int(df['below_limit'].sum())  if 'below_limit'  in df.columns else 0
             
             response = f"📊 **Results for {type_display}:**\n\n"
             response += f"✅ Total unique samples: **{total_samples}**\n"
