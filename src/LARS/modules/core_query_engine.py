@@ -154,9 +154,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         dictionaries (samples, pesticides, neighborhoods) come from
         the centralized ``modules.mappings`` module.
         """
-        # ============================================================
         # Dialect Synonyms (KEEP — engine-specific)
-        # ============================================================
         self.dialect_synonyms = {
             'give me': 'show',
             'show me': 'show',
@@ -182,9 +180,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             'for each': 'individually',
         }
 
-        # ============================================================
         # Action keywords (KEEP — engine-specific)
-        # ============================================================
         self.action_keywords = {
             'search': ['find', 'search', 'locate'],
             'show': ['show', 'display', 'list'],
@@ -194,9 +190,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             'what': ['what', 'which'],
         }
 
-        # ============================================================
         # Limit/Compliance keywords (KEEP — engine-specific)
-        # ============================================================
         self.above_limit_keywords = [
             'above limit', 'exceeding', 'over limit', 'violation',
             'non-compliant', 'non compliant', 'noncompliant', 'failed', 'failing', 'exceed',
@@ -205,9 +199,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             'below limit', 'within limit', 'compliant', 'passing', 'safe', 'passed',
         ]
 
-        # ============================================================
         # Statistics keywords (KEEP — engine-specific)
-        # ============================================================
         self.stats_keywords = {
             'max': ['max', 'maximum', 'highest'],
             'min': ['min', 'minimum', 'lowest'],
@@ -218,9 +210,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             'unique': ['unique', 'distinct'],
         }
 
-        # ============================================================
         # Entity dictionaries — FROM CENTRALIZED MAPPINGS
-        # ============================================================
         self.sample_types = SAMPLE_CORRECTIONS
         self.english_sample_types = SAMPLE_EN_TO_AR
         self.neighborhood_patterns = NEIGHBORHOOD_CORRECTIONS
@@ -827,11 +817,9 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         detected_pesticide    = ctx['detected_pesticide']
         _detected_category_key = ctx['category_key']
 
-        # ============================================================
         # Pattern 0: Comprehensive neighborhood + sample type analysis
         # "what are the types of spices in al_iskan and how many above/below limit"
         # This includes samples with NO pesticides detected (MUST BE FIRST)
-        # ============================================================
         category_keywords = ['types', 'what are']
         limit_keywords = ['above', 'below', 'limit']
         
@@ -845,13 +833,11 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         if is_comprehensive_hood_query:
             return self._handle_comprehensive_neighborhood(query, detected_samples, detected_neighborhoods)
         
-        # ============================================================
         # Pattern 0B: Category/types in neighborhood (WITHOUT limit keywords)
         # "what are the types of spices in al_iskan"
         # This catches queries that Pattern 0 misses because they
         # don't mention limits. We route to the SAME handler — it
         # already shows types + counts + limits in its output.
-        # ============================================================
         category_names = ['spices', 'vegetables', 'fruits', 'greens', 'nuts', 'grains', 'dates']
         has_category = any(cat in query_lower for cat in category_names)
         has_type_question = any(kw in query_lower for kw in category_keywords)
@@ -860,9 +846,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             return self._handle_comprehensive_neighborhood(query, detected_samples, detected_neighborhoods)
         
         # Continue with other patterns if not comprehensive
-        # ============================================================
         # Pattern 1: Samples with N pesticides (supports multiple counts)
-        # ============================================================
         pesticide_count_keywords = ['pesticide', 'pesticides']
         zero_pesticide_keywords = ['zero pesticide', 'clean', 'free of pesticides', 'no pesticide']
         has_zero_request = any(kw in query_lower for kw in zero_pesticide_keywords)
@@ -887,10 +871,8 @@ class CoreQueryEngine(AdvancedHandlersMixin):
                     if 0 <= n_pesticides <= 50:
                         return self._handle_n_pesticides(n_pesticides, detected_samples)
         
-        # ============================================================
         # Pattern 1B: Violations threshold — "find vegetables with more than 10 violations"
         # Matches: category/sample + (more than | over | above) + number + violation
-        # ============================================================
         violation_threshold_kws_en = [
             'more than', 'over', 'greater than', 'above', 'at least', 'exceeding',
         ]
@@ -909,11 +891,9 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             )
 
 
-        # ============================================================
         # Pattern 2: Count samples above/below limit (pesticide concentration)
         # "how many tomato samples exceed limits"
         # This checks if ANY pesticide in the sample exceeds its limit
-        # ============================================================
         count_phrases = ['count', 'how many', 'number of']
         # Expanded keywords for ABOVE LIMIT (non-compliant/failing)
         above_limit_phrases = [
@@ -975,11 +955,9 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         if is_count_query and detected_samples and (is_above_limit or is_below_limit):
             return self._handle_count_samples_limit(detected_samples, detected_neighborhoods, is_above_limit)
         
-        # ============================================================
         # Pattern 2B: Count compliant/non-compliant samples (sample_result)
         # "how many non-compliant cucumber samples"
         # This uses the official sample_result column, NOT pesticide limits
-        # ============================================================
         compliant_keywords = ['compliant', 'passed']
         non_compliant_keywords = ['non-compliant', 'non compliant', 'failed']
         
@@ -993,49 +971,37 @@ class CoreQueryEngine(AdvancedHandlersMixin):
                 return self._handle_count_samples_compliance(detected_samples, detected_neighborhoods, 
                                                               is_non_compliant_query)
         
-        # ============================================================
         # Pattern 3: List pesticides in sample type
         # "what are the pesticides in tomatoes"
-        # ============================================================
         pesticide_list_patterns = ['pesticides found in', 'pesticides detected in', 'what pesticides in', 'list pesticides in']
         if any(p in query_lower for p in pesticide_list_patterns) and detected_samples:
             return self._handle_list_pesticides(detected_samples)
         
-        # ============================================================
         # Pattern 4: Pesticides in neighborhoods
         # "what pesticides are in al iskan neighborhood"
-        # ============================================================
         if detected_neighborhoods and ('pesticide' in query_lower or 'pesticides' in query_lower):
             show_separately = any(phrase in query_lower for phrase in ['individually', 'separately', 'for each'])
             return self._handle_neighborhood_pesticides(detected_neighborhoods, show_separately)
         
-        # ============================================================
         # Pattern 5: Find samples containing pesticide
         # "tomato samples containing bifenthrin"
-        # ============================================================
         if detected_pesticide and detected_samples:
             return self._handle_find_pesticide_in_sample(detected_pesticide, detected_samples)
         
-        # ============================================================
         # Pattern 6: Neighborhood ranking
         # "ranking of neighborhoods by violations"
-        # ============================================================
         if any(kw in query_lower for kw in ['rank', 'ranking', 'worst', 'most violations']) and \
            any(kw in query_lower for kw in ['neighborhood', 'neighborhoods']):
             return self._handle_neighborhood_ranking()
         
-        # ============================================================
         # Pattern 7: Comprehensive analysis
         # "comprehensive analysis of tomatoes"
-        # ============================================================
         comprehensive_keywords = ['comprehensive analysis', 'comprehensive report', 'statistics for', 'summary of']
         if any(kw in query_lower for kw in comprehensive_keywords) and detected_samples:
             return self._handle_comprehensive_analysis(detected_samples)
         
-        # ============================================================
         # Pattern 8: Pesticide statistics (max, min, range, median, average)
         # "what is the median concentration of imidacloprid in tomatoes"
-        # ============================================================
         stats_keywords_found = []
         for stat_type, keywords in self.stats_keywords.items():
             if any(kw in query_lower for kw in keywords):
@@ -1044,23 +1010,17 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         if stats_keywords_found and detected_pesticide:
             return self._handle_pesticide_stats(detected_pesticide, detected_samples, stats_keywords_found)
         
-        # ============================================================
         # Pattern HRI: Health Risk Index
-        # ============================================================
         hri_kws_en = ['health risk index', 'health risk', 'hri', 'risk index']
         if any(kw in query_lower for kw in hri_kws_en) and detected_samples:
             return self._handle_health_risk_index(detected_samples)
 
-        # ============================================================
         # Pattern QI: Quality Index
-        # ============================================================
         qi_kws_en = ['quality index', 'quality score', 'quality indicator']
         if any(kw in query_lower for kw in qi_kws_en) and detected_samples:
             return self._handle_quality_index(detected_samples)
 
-        # ============================================================
         # Pattern CG: Chemical Groups / Classify pesticides
-        # ============================================================
         cg_kws_en = ['chemical group', 'chemical groups', 'classify pesticide',
                      'pesticide class', 'group classification']
         if any(kw in query_lower for kw in cg_kws_en):
@@ -1071,9 +1031,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
                 min_pest = int(nums[0])
             return self._handle_chemical_groups(detected_samples, min_pesticides=min_pest)
 
-        # ============================================================
         # Pattern CAT_PEST: Category + Pesticide (vegetables with bifenthrin)
-        # ============================================================
         _cat_en_map = {
             'vegetable': 'vegetable', 'vegetables': 'vegetable',
             'fruit': 'fruit', 'fruits': 'fruit',
@@ -1081,9 +1039,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             'nut': 'nut', 'nuts': 'nut',
             'grain': 'grain', 'grains': 'grain', 'leafy': 'leafy',
         }
-        # ============================================================
         # Pattern CAT_PEST: Category + Pesticide (vegetables with bifenthrin)
-        # ============================================================
         _cat_en_map = {
             'vegetable': 'vegetable', 'vegetables': 'vegetable',
             'fruit': 'fruit', 'fruits': 'fruit',
@@ -1099,10 +1055,8 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         if detected_pesticide and _cat_key_process and not detected_samples:
             return self._handle_category_pesticide(detected_pesticide, _cat_key_process, [])
 
-        # ============================================================
         # Pattern CAT_LIMIT: Category above AND below limit summary
         # "spices above and below permissible limits"
-        # ============================================================
         cat_both_kws_en = ['above and below', 'above or below', 'above & below']
         is_cat_both = any(kw in query_lower for kw in cat_both_kws_en)
         if is_cat_both and _cat_key_process:
@@ -1113,10 +1067,8 @@ class CoreQueryEngine(AdvancedHandlersMixin):
                 _test_type = 'pesticide'
             return self._handle_category_limit_summary(_cat_key_process, detected_samples, _test_type)
 
-        # ============================================================
         # Pattern AVG_LIMIT: Average concentration above/below limit
         # "average concentration of imidacloprid above limit"
-        # ============================================================
         avg_lim_kws = ['average concentration above', 'avg concentration above',
                        'mean concentration above', 'average above limit']
         is_avg_lim = (
@@ -1127,19 +1079,15 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             _above = 'above' in query_lower
             return self._handle_avg_concentration_limit(detected_pesticide, detected_samples, _above)
 
-        # ============================================================
         # Pattern FREQ: Pesticide frequency in sample
         # "frequency of imidacloprid in tomatoes"
-        # ============================================================
         freq_kws_en = ['frequency of', 'how often', 'occurrence of']
         is_freq = any(kw in query_lower for kw in freq_kws_en)
         if is_freq and detected_pesticide and detected_samples:
             return self._handle_pesticide_frequency_in_sample(detected_pesticide, detected_samples)
 
-        # ============================================================
         # Pattern UNIQUE_NC: Unique non-compliant + pesticide repetitions
         # "How many unique non-compliant samples + repetitions in cardamom"
-        # ============================================================
         unc_kws_en = ['unique non-compliant', 'unique noncompliant']
         is_unc = (
             any(kw in query_lower for kw in unc_kws_en) or
@@ -1149,10 +1097,8 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         if is_unc and detected_samples:
             return self._handle_unique_noncompliant_with_pesticides(detected_samples)
 
-        # ============================================================
         # Pattern 9: Search for samples by establishment/recipient
         # "search for samples in facility al maraee"
-        # ============================================================
         recipient_keywords = ['recipient']
         establishment_keywords = ['establishment', 'facility', 'store', 'shop']
         
@@ -1185,43 +1131,34 @@ class CoreQueryEngine(AdvancedHandlersMixin):
                     name, search_type, detected_samples, is_unique, is_compliant, is_non_compliant
                 )
         
-        # ============================================================
         # Pattern 10: Samples containing specific pesticide (without sample type filter)
         # "how many samples contain fipronil"
-        # ============================================================
         if detected_pesticide and not detected_samples:
             # Check if it's asking about samples with this pesticide
             if any(kw in query_lower for kw in ['samples', 'count', 'how many']):
                 return self._handle_samples_with_pesticide(detected_pesticide)
         
-        # ============================================================
         # Pattern 11: Unique sample count
         # "how many unique cucumber samples"
-        # ============================================================
         if detected_samples and any(kw in query_lower for kw in ['unique', 'distinct', 'sample code']):
             return self._handle_unique_samples_count(detected_samples, detected_neighborhoods)
         
         # Pattern 12: Just search for pesticide (no sample filter)
         # "Find fipronil"
-        # ============================================================
         search_keywords = ['find', 'search', 'locate']
         if detected_pesticide and any(kw in query_lower for kw in search_keywords):
             return self._handle_find_pesticide_all(detected_pesticide)
         
-        # ============================================================
         # Pattern 14: Simple sample count (NO CONDITIONS)
         # "how many tomato samples"
         # This MUST be after limit/compliance patterns to avoid conflicts
-        # ============================================================
         count_keywords = ['count', 'how many', 'samples']
         if detected_samples and any(kw in query_lower for kw in count_keywords):
             # Only trigger if NOT a limit/compliance query (those are handled above)
             return self._handle_simple_sample_count(detected_samples, detected_neighborhoods)
         
-        # ============================================================
         # Pattern 14: LLM Fallback for unknown queries
         # If we have LLM configured, try to generate SQL
-        # ============================================================
         if self.llm_client is not None:
             llm_response = self._handle_llm_query(query, detected_samples, detected_neighborhoods, detected_pesticide)
             if llm_response[0]:
@@ -1232,9 +1169,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
 
 
     
-    # ============================================================
     # Handlers
-    # ============================================================
     
     def _handle_n_pesticides(self, n: int, samples: List[str]) -> Tuple[str, pd.DataFrame]:
         """Samples with exactly N pesticides."""
@@ -2535,9 +2470,7 @@ SQL:"""
 
         return response, df
 
-    # ============================================================
     # LLM SQL Generation (Gemini / GPT / Ollama Fallback)
-    # ============================================================
 
     def _get_schema_info(self) -> str:
         """Return DB schema as a formatted string for LLM prompting (schema-only, no data)."""

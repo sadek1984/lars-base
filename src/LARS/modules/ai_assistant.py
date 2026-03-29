@@ -33,326 +33,126 @@ except ImportError:
 
 
 
+def _chart_cols(df):
+    """Return (numeric_cols, text_cols) for a DataFrame."""
+    return (
+        df.select_dtypes(include=[np.number]).columns.tolist(),
+        df.select_dtypes(include=['object']).columns.tolist(),
+    )
+
+
 def generate_bar_chart(df: pd.DataFrame, query: str):
-    """Generate an interactive bar chart from DataFrame"""
+    """Generate an interactive bar chart from DataFrame."""
     try:
         import plotly.graph_objects as go
-        
-        # Determine x and y columns intelligently
-        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-        text_cols = df.select_dtypes(include=['object']).columns.tolist()
-        
+        numeric_cols, text_cols = _chart_cols(df)
         if not numeric_cols:
             st.warning("⚠️ No numeric columns found for visualization")
             return
-        
-        # Use first text column for x-axis, first numeric for y-axis
         x_col = text_cols[0] if text_cols else df.columns[0]
         y_col = numeric_cols[0]
-        
-        # Create bar chart
-        fig = go.Figure(data=[
-            go.Bar(
-                x=df[x_col],
-                y=df[y_col],
-                marker=dict(
-                    color=df[y_col],
-                    colorscale='Viridis',
-                    showscale=True
-                ),
-                text=df[y_col],
-                textposition='outside',
-                texttemplate='%{text:.1f}'
-            )
-        ])
-        
-        fig.update_layout(
-            title=f"Bar Chart: {y_col} by {x_col}",
-            xaxis_title=x_col,
-            yaxis_title=y_col,
-            height=500,
-            showlegend=False,
-            hovermode='x unified'
-        )
-        
+        fig = go.Figure(data=[go.Bar(
+            x=df[x_col], y=df[y_col],
+            marker=dict(color=df[y_col], colorscale='Viridis', showscale=True),
+            text=df[y_col], textposition='outside', texttemplate='%{text:.1f}'
+        )])
+        fig.update_layout(title=f"Bar Chart: {y_col} by {x_col}", xaxis_title=x_col,
+                          yaxis_title=y_col, height=500, showlegend=False, hovermode='x unified')
         st.plotly_chart(fig, use_container_width=True)
-        
     except Exception as e:
         st.error(f"Error generating bar chart: {e}")
 
+
 def generate_line_chart(df: pd.DataFrame, query: str):
-    """Generate an interactive line chart from DataFrame"""
+    """Generate an interactive line chart from DataFrame."""
     try:
         import plotly.graph_objects as go
-        
-        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-        text_cols = df.select_dtypes(include=['object']).columns.tolist()
-        
+        numeric_cols, text_cols = _chart_cols(df)
         if not numeric_cols:
             st.warning("⚠️ No numeric columns found for visualization")
             return
-        
         x_col = text_cols[0] if text_cols else df.columns[0]
         y_col = numeric_cols[0]
-        
         fig = go.Figure()
-        
-        fig.add_trace(go.Scatter(
-            x=df[x_col],
-            y=df[y_col],
-            mode='lines+markers',
-            line=dict(color='#2e7d32', width=3),
-            marker=dict(size=10, color='#4caf50'),
-            name=y_col
-        ))
-        
-        fig.update_layout(
-            title=f"Line Chart: {y_col} Trend",
-            xaxis_title=x_col,
-            yaxis_title=y_col,
-            height=500,
-            hovermode='x unified'
-        )
-        
+        fig.add_trace(go.Scatter(x=df[x_col], y=df[y_col], mode='lines+markers',
+                                  line=dict(color='#2e7d32', width=3),
+                                  marker=dict(size=10, color='#4caf50'), name=y_col))
+        fig.update_layout(title=f"Line Chart: {y_col} Trend", xaxis_title=x_col,
+                          yaxis_title=y_col, height=500, hovermode='x unified')
         st.plotly_chart(fig, use_container_width=True)
-        
     except Exception as e:
         st.error(f"Error generating line chart: {e}")
 
+
 def generate_pie_chart(df: pd.DataFrame, query: str):
-    """Generate an interactive pie chart from DataFrame"""
+    """Generate an interactive pie chart from DataFrame."""
     try:
         import plotly.graph_objects as go
         import plotly.express as px
-        
-        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-        text_cols = df.select_dtypes(include=['object']).columns.tolist()
-        
+        numeric_cols, text_cols = _chart_cols(df)
         if not numeric_cols or not text_cols:
             st.warning("⚠️ Need both text and numeric columns for pie chart")
             return
-        
-        labels_col = text_cols[0]
-        values_col = numeric_cols[0]
-        
-        # Limit to top 10 for readability
+        labels_col, values_col = text_cols[0], numeric_cols[0]
         df_top = df.nlargest(10, values_col) if len(df) > 10 else df
-        
         fig = go.Figure(data=[go.Pie(
-            labels=df_top[labels_col],
-            values=df_top[values_col],
-            hole=0.3,
+            labels=df_top[labels_col], values=df_top[values_col], hole=0.3,
             textinfo='label+percent',
-            marker=dict(
-                colors=px.colors.sequential.Viridis,
-                line=dict(color='white', width=2)
-            )
+            marker=dict(colors=px.colors.sequential.Viridis, line=dict(color='white', width=2))
         )])
-        
-        fig.update_layout(
-            title=f"Pie Chart: {values_col} Distribution",
-            height=500,
-            showlegend=True
-        )
-        
+        fig.update_layout(title=f"Pie Chart: {values_col} Distribution", height=500, showlegend=True)
         st.plotly_chart(fig, use_container_width=True)
-        
     except Exception as e:
         st.error(f"Error generating pie chart: {e}")
 
 def generate_radar_chart(df: pd.DataFrame, query: str):
-    """Generate an interactive radar chart from DataFrame"""
+    """Generate an interactive radar chart from DataFrame."""
     try:
         import plotly.graph_objects as go
-        
-        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-        text_cols = df.select_dtypes(include=['object']).columns.tolist()
-        
+        numeric_cols, text_cols = _chart_cols(df)
         if not numeric_cols or not text_cols:
             st.warning("⚠️ Need both text and numeric columns for radar chart")
             return
-        
-        # Limit to top 10 for readability
         df_top = df.head(10)
-        
         categories = df_top[text_cols[0]].tolist()
-        
-        # If we have multiple numeric columns, create multi-series radar
+        def _norm(col):
+            vals = df_top[col].tolist()
+            m = max(vals) if max(vals) > 0 else 1
+            return [(v / m) * 100 for v in vals]
         if len(numeric_cols) > 1:
             fig = go.Figure()
-            
-            for col in numeric_cols[:3]:  # Limit to 3 series for clarity
-                # Normalize values to 0-100 scale
-                values = df_top[col].tolist()
-                max_val = max(values) if max(values) > 0 else 1
-                normalized = [(v / max_val) * 100 for v in values]
-                
-                fig.add_trace(go.Scatterpolar(
-                    r=normalized,
-                    theta=categories,
-                    fill='toself',
-                    name=col
-                ))
+            for col in numeric_cols[:3]:
+                fig.add_trace(go.Scatterpolar(r=_norm(col), theta=categories, fill='toself', name=col))
         else:
-            # Single series radar
-            values = df_top[numeric_cols[0]].tolist()
-            max_val = max(values) if max(values) > 0 else 1
-            normalized = [(v / max_val) * 100 for v in values]
-            
             fig = go.Figure(data=go.Scatterpolar(
-                r=normalized,
-                theta=categories,
-                fill='toself',
-                marker=dict(color='#4caf50'),
-                line=dict(color='#2e7d32', width=2)
+                r=_norm(numeric_cols[0]), theta=categories, fill='toself',
+                marker=dict(color='#4caf50'), line=dict(color='#2e7d32', width=2)
             ))
-        
-        fig.update_layout(
-            polar=dict(
-                radialaxis=dict(
-                    visible=True,
-                    range=[0, 100]
-                )
-            ),
-            title="Radar Chart: Comparative Analysis",
-            height=600,
-            showlegend=True
-        )
-        
+        fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
+                          title="Radar Chart: Comparative Analysis", height=600, showlegend=True)
         st.plotly_chart(fig, use_container_width=True)
         st.caption("📊 Values are normalized to 0-100 scale for comparison")
-        
     except Exception as e:
         st.error(f"Error generating radar chart: {e}")
 
-def generate_heatmap(df: pd.DataFrame, query: str = ""):
-    """Generate an interactive general heatmap from DataFrame"""
-    
-    st.subheader("📈 Data Exploration Heatmap")
-    
-    if query:
-        try:
-            df_filtered = df.query(query)
-            if len(df_filtered) == 0:
-                st.warning("Query returned no results. Showing full dataset.")
-                df_filtered = df
-        except:
-            st.error("Invalid query syntax")
-            df_filtered = df
-    else:
-        df_filtered = df
-    
-    # Select columns for heatmap
-    numeric_cols = df_filtered.select_dtypes(include=[np.number]).columns.tolist()
-    categorical_cols = df_filtered.select_dtypes(include=['object']).columns.tolist()
-    
-    if len(numeric_cols) < 1:
-        st.warning("No numeric columns available for heatmap")
-        return
-    
-    # Let user choose what to visualize
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        row_col = st.selectbox(
-            "Select row grouping:",
-            options=categorical_cols,
-            index=0 if categorical_cols else None,
-            help="Group data by this categorical column for rows",
-            key="heatmap_row_col"
-        )
-    
-    with col2:
-        value_col = st.selectbox(
-            "Select value to visualize:",
-            options=numeric_cols,
-            index=0,
-            help="Numeric value to show in heatmap",
-            key="heatmap_value_col"
-        )
-    
-    # Aggregate data
-    if row_col and value_col:
-        agg_data = df_filtered.groupby(row_col)[value_col].mean().sort_values(ascending=False)
-        
-        # Get top 20 categories for readability
-        top_categories = agg_data.head(20)
-        
-        # Create heatmap (single column)
-        fig = go.Figure(data=go.Heatmap(
-            z=[top_categories.values],
-            x=[f"{idx}: {val:.1f}" for idx, val in zip(top_categories.index, top_categories.values)],
-            y=["Value"],
-            colorscale='Viridis',
-            text=[top_categories.values],
-            texttemplate='%{text:.1f}',
-            textfont={"size": 12},
-            colorbar=dict(title=value_col),
-            hovertemplate='<b>Category:</b> %{x}<br>' +
-                         '<b>Avg Value:</b> %{z:.1f}<br>' +
-                         '<extra></extra>'
-        ))
-        
-        fig.update_layout(
-            title=f"Average {value_col} by {row_col}",
-            height=400,
-            xaxis_tickangle=-45,
-            margin=dict(t=50, b=150)
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Show data table
-        with st.expander("View Data Table"):
-            st.dataframe(top_categories.reset_index().rename(
-                columns={row_col: 'Category', value_col: f'Avg_{value_col}'}
-            ))
 
 def generate_scatter_plot(df: pd.DataFrame, query: str):
-    """Generate an interactive scatter plot from DataFrame"""
+    """Generate an interactive scatter plot from DataFrame."""
     try:
         import plotly.express as px
-        
-        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-        
+        numeric_cols, text_cols = _chart_cols(df)
         if len(numeric_cols) < 2:
             st.warning("⚠️ Need at least 2 numeric columns for scatter plot")
             return
-        
-        x_col = numeric_cols[0]
-        y_col = numeric_cols[1]
-        
-        # Use third numeric column for size if available
+        x_col, y_col = numeric_cols[0], numeric_cols[1]
         size_col = numeric_cols[2] if len(numeric_cols) >= 3 else None
-        
-        # Use text column for color if available
-        text_cols = df.select_dtypes(include=['object']).columns.tolist()
         color_col = text_cols[0] if text_cols else None
-        
-        fig = px.scatter(
-            df,
-            x=x_col,
-            y=y_col,
-            size=size_col,
-            color=color_col,
-            title=f"Scatter Plot: {y_col} vs {x_col}",
-            height=600,
-            hover_data=df.columns.tolist()
-        )
-        
-        fig.update_traces(marker=dict(
-            line=dict(width=1, color='white'),
-            opacity=0.7
-        ))
-        
-        fig.update_layout(
-            xaxis_title=x_col,
-            yaxis_title=y_col,
-            showlegend=True
-        )
-        
+        fig = px.scatter(df, x=x_col, y=y_col, size=size_col, color=color_col,
+                         title=f"Scatter Plot: {y_col} vs {x_col}",
+                         height=600, hover_data=df.columns.tolist())
+        fig.update_traces(marker=dict(line=dict(width=1, color='white'), opacity=0.7))
+        fig.update_layout(xaxis_title=x_col, yaxis_title=y_col, showlegend=True)
         st.plotly_chart(fig, use_container_width=True)
-        
     except Exception as e:
         st.error(f"Error generating scatter plot: {e}")
 

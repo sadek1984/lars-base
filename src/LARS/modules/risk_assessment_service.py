@@ -106,11 +106,7 @@ POPULATION_CLASSES = {
 # Sources: National Nutrition Surveys & SFDA
 # ============================================================================
 
-# Saudi Arabia Ingestion Rates (IR) - Now handled by RiskAssessmentConfig
 SAUDI_IR_DATA = RiskAssessmentConfig.SAUDI_INGESTION_RATES
-SAUDI_COMMODITY_MAPPING = RiskAssessmentConfig.COMMODITY_MAPPING
-
-# Legacy mapping for compatibility
 SAUDI_COMMODITY_MAPPING = RiskAssessmentConfig.COMMODITY_MAPPING
 
 # EU Commodity Codes Mapping (Regulation (EC) No 396/2005)
@@ -791,34 +787,7 @@ def calculate_sample_iqr_summary(
     residue_list: List[Dict[str, Any]],
     commodity: str = "Total Vegetables"
 ) -> Dict[str, Any]:
-    """
-    🆕 New Sample-Level IQR Calculation (as per user's diagram)
-    
-    Logic:
-    1. For each SAMPLE, sum the IQR of all pesticides detected in that sample
-       IQR_sample = Σ (concentration_i / MRL_i) for all pesticides i in sample
-    2. Classify each sample based on its total IQR:
-       - Excellent: IQR = 0 (no pesticides detected)
-       - Good: 0 < IQR <= 0.6
-       - Adequate: 0.6 < IQR <= 1
-       - Inadequate: IQR > 1
-    3. Return summary statistics for the commodity
-    
-    Parameters:
-        residue_list: List of dicts with keys:
-            - 'sample_code': Unique sample identifier
-            - 'name': pesticide name
-            - 'concentration': residue concentration mg/kg
-            - 'mrl': Maximum Residue Limit mg/kg
-        commodity: Commodity name (for reference)
-    
-    Returns:
-        Dictionary with:
-            - sample_iqr_details: List of {sample_code, total_iqr, category}
-            - category_counts: {Excellent, Good, Adequate, Inadequate}
-            - category_percentages: {Excellent, Good, Adequate, Inadequate}
-            - total_samples: Total number of unique samples
-    """
+    """Per-sample IQR sum (Σ concentration/MRL), classified as Excellent/Good/Adequate/Inadequate."""
     # Get risk service for MRL lookup if needed
     service = get_risk_service()
     
@@ -1262,64 +1231,3 @@ def detect_query_type(query: str) -> Optional[str]:
             return "[TRIGGER_UI: QUALITY_INDEX_WINDOW]"
     
     return None
-
-
-
-
-# ============================================================================
-# MODULE TEST
-# ============================================================================
-
-if __name__ == "__main__":
-    print("=" * 80)
-    print("RISK ASSESSMENT SERVICE - TEST")
-    print("=" * 80)
-    
-    # Initialize service
-    service = RiskAssessmentService()
-    
-    # Test ADI lookup
-    print("\n📊 Testing ADI Lookup:")
-    for pesticide in ['chlorpyrifos', 'deltamethrin', 'imidacloprid', 'unknown_pest']:
-        adi = service.adi_lookup.get_adi(pesticide)
-        if adi:
-            print(f"  ✅ {pesticide}: ADI = {adi['value']} {adi['unit']}")
-        else:
-            print(f"  ❌ {pesticide}: NOT FOUND")
-    
-    # Test chemical classification
-    print("\n🧪 Testing Chemical Classification:")
-    pesticides_to_classify = ['lambda-cyhalothrin', 'chlorpyrifos', 'carbendazim', 'unknown']
-    for pest in pesticides_to_classify:
-        group = service.classifier.get_group(pest)
-        print(f"  {pest} → {group or 'Unknown'}")
-    
-    # Test HQc calculation
-    print("\n🔬 Testing HQc Calculation:")
-    result = service.calculate_hqc('chlorpyrifos', 0.1, 0.1, 70)
-    if result:
-        print(f"  Pesticide: {result['pesticide']}")
-        print(f"  EDI: {result['edi']:.6f} mg/kg bw/day")
-        print(f"  ADI: {result['adi']} mg/kg bw/day")
-        print(f"  HQc: {result['hqc']:.4f} ({result['hqc_percent']:.2f}%)")
-        print(f"  Interpretation: {result['interpretation']}")
-    
-    # Test sample analysis
-    print("\n📋 Testing Sample Risk Analysis:")
-    sample = [
-        {'pesticide': 'lambda-cyhalothrin', 'concentration': 0.02},
-        {'pesticide': 'chlorpyrifos', 'concentration': 0.1},
-        {'pesticide': 'carbendazim', 'concentration': 0.05}
-    ]
-    
-    analysis = service.analyze_sample_risk(sample, population_class='toddlers')
-    print(f"  Population: {analysis['population']['name_en']} ({analysis['population']['body_weight']} kg)")
-    print(f"  Analyzed: {analysis['analyzed_count']}/{analysis['pesticide_count']} pesticides")
-    print(f"  Total HIc: {analysis['hazard_index']['total_hic']:.4f}")
-    print(f"  Overall: {analysis['overall_interpretation']}")
-    
-    if analysis['highest_risk_group']:
-        print(f"  Highest risk group: {analysis['highest_risk_group']['name_en']}")
-    
-    print("\n" + "=" * 80)
-    print("✅ Test completed!")
