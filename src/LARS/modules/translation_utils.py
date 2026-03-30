@@ -14,6 +14,7 @@ Handles Arabic ↔ English translation for:
 """
 
 import pandas as pd
+from modules.prompt_loader import load_prompt
 
 
 # ============================================================
@@ -332,31 +333,9 @@ def translate_dataframe(df: pd.DataFrame, lang: str) -> pd.DataFrame:
 
 
 def get_language_system_prompt(lang: str) -> str:
-    """
-    Return the language instruction string to inject into AI SQL/Pandas prompts.
-    This replaces the static rule #15 in your existing prompt.
-
-    Usage:
-        lang_instruction = get_language_system_prompt(query_lang)
-        prompt = prompt.replace("{lang_instruction}", lang_instruction)
-    """
-    if lang == "english":
-        return """LANGUAGE CONSTRAINT - CRITICAL AND NON-NEGOTIABLE:
-The user's question is in ENGLISH. You MUST ensure ALL output is in English.
-- In your SQL query, use CASE statements or aliases to translate Arabic values if possible
-- All column aliases (AS ...) must be English words
-- **CRITICAL NOTE**: The `chemistry_tidy` table NOW CONTAINS ENGLISH values for `اسم العينة` (Sample Name). E.g., it contains 'Tomato' instead of 'طماطم'. IF querying for sample names, search for the English literal ('Tomato', 'Cucumber', 'Zucchini', etc.) OR use a case-insensitive `LOWER("اسم العينة") LIKE '%tomato%'` approach.
-- After you generate the SQL, the system will also auto-translate remaining Arabic values
-- Do NOT use Arabic characters anywhere in column aliases or string literals in the SQL EXCEPT if specifically matching an Arabic district name (e.g., district remains Arabic).
-- Example: Instead of AS عدد_العينات, write AS sample_count
-- Example: Instead of AS المبيد, write AS pesticide_name
-- Example: Instead of AS الحالة, write AS status"""
-    else:
-        return """قاعدة اللغة: المستخدم يتحدث بالعربية. أجب باللغة العربية فقط.
-- **ملاحظة هامة جداً**: قاعدة البيانات `chemistry_tidy` تحتوي الآن على أسماء العينات باللغة الإنجليزية في عمود `اسم العينة`. \
-عند كتابة كود SQL، يجب أن تترجم اسم العينة إلى الإنجليزي في الـ WHERE clause. مثلاً، إذا سأل المستخدم عن 'طماطم'، اكتب `"اسم العينة" LIKE '%Tomato%'`، 'الخيار' هو 'Cucumber', 'الكوسة' هي 'Zucchini' وهكذا. \
-- استخدم الأسماء العربية للبيانات في ردودك النهائية للمستخدم.
-- أسماء أعمدة SQL يمكن أن تكون عربية أو إنجليزية"""
+    """Return the language instruction string to inject into AI SQL/Pandas prompts."""
+    file = "language_system_en" if lang == "english" else "language_system_ar"
+    return load_prompt(file).strip()
 
 
 def translate_success_message(msg: str, lang: str) -> str:

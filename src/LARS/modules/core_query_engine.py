@@ -51,6 +51,7 @@ except ImportError:
 
 # Database path — delegate to data_access so all modules use the same resolution
 from modules.data_access import _DUCKDB_PATH as DB_PATH
+from modules.prompt_loader import load_prompt
 
 # LLM Configuration
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
@@ -2294,26 +2295,14 @@ Key columns:
 """
             
             # Build prompt
-            prompt = f"""You are a SQL expert for a pesticide analysis database.
-Generate a DuckDB SQL query for this question:
-
-Question: {query}
-
-{schema_context}
-
-Detected entities:
-- Sample types: {samples if samples else 'None'}
-- Neighborhoods: {neighborhoods if neighborhoods else 'None'}
-- Pesticide: {pesticide if pesticide else 'None'}
-
-Rules:
-1. Use COUNT(DISTINCT "كود العينة") for counting unique samples
-2. Always quote Arabic column names with double quotes
-3. Return only the SQL query, no explanation
-4. Limit results to 100 rows
-5. Use ILIKE for case-insensitive matching
-
-SQL:"""
+            prompt = load_prompt(
+                "sql_ollama_fallback",
+                query=query,
+                schema_context=schema_context,
+                samples=samples if samples else "None",
+                neighborhoods=neighborhoods if neighborhoods else "None",
+                pesticide=pesticide if pesticide else "None",
+            )
             
             # Call LLM
             response = self.llm_client.chat(
@@ -2521,39 +2510,14 @@ SQL:"""
         detected_pesticide: Optional[str],
     ) -> str:
         """Build the schema-only SQL prompt for Gemini / GPT / Ollama."""
-        schema = self._get_schema_info()
-        return f"""Generate a DuckDB SQL query to answer the following question about a pesticide testing database.
-
-\U0001f512 Schema (metadata only — no actual data exposed):
-{schema}
-
-RULES:
-1. Always quote Arabic column names in double quotes: `"كود العينة"`
-2. Use COUNT(DISTINCT "كود العينة") to count unique samples
-3. Use ILIKE for case-insensitive text matching
-4. DuckDB syntax only — no MySQL/Postgres extensions
-5. Limit results to 100 rows unless the question asks for all
-6. "اسم العينة" stores ENGLISH names: Tomato, Cucumber, Pepper, Cardamom, Pistachios, …
-7. "الحى" stores Arabic neighborhood names
-
-Detected entities:
-- Samples       : {detected_samples or 'None'}
-- Neighborhoods : {detected_neighborhoods or 'None'}
-- Pesticide     : {detected_pesticide or 'None'}
-
-Arabic ↔ English quick map:
-طماطم→Tomato  خيار→Cucumber  فلفل→Pepper  باذنجان→Eggplant  كوسة→Zucchini
-كمون→Cumin  هيل→Cardamom  فستق→Pistachios  زعتر→Thyme
-فوق الحد / تجاوز     → is_above_limit = 1
-تحت الحد / ضمن الحد  → is_above_limit = 0
-غير مطابق / راسب     → sample_result LIKE '%Non-Compliant%'
-مطابق / ناجح          → sample_result LIKE '%Compliant%' AND sample_result NOT LIKE '%Non%'
-البايفنثرن→Bifenthrin  الكلوربيريفوس→Chlorpyrifos  الإيميداكلوبريد→Imidacloprid
-الأباميكتين→Abamectin  الثيامثوكسام→Thiamethoxam  الفيبرونيل→Fipronil
-
-Question: {query}
-
-Generate ONLY the SQL wrapped in ```sql``` markers:"""
+        return load_prompt(
+            "sql_llm_fallback",
+            schema=self._get_schema_info(),
+            detected_samples=detected_samples or "None",
+            detected_neighborhoods=detected_neighborhoods or "None",
+            detected_pesticide=detected_pesticide or "None",
+            query=query,
+        )
 
     def process_with_gemini_fallback(
         self,

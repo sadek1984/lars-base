@@ -36,6 +36,7 @@ PERSONA_MANAGER = "manager"
 PERSONA_TECHNICIAN = "technician"
 PERSONA_ANALYST = "analyst"
 
+from modules.prompt_loader import load_prompt
 from modules.mappings import (
     STT_CORRECTIONS,
     KNOWN_PESTICIDES_AR,
@@ -119,9 +120,7 @@ def route_intent(text):
         return "ENTRY"
     
     # Use LLM as fallback
-    prompt = f"""Classify: QUERY or ENTRY.
-Text: "{text}"
-Answer with one word only: QUERY or ENTRY"""
+    prompt = load_prompt("voice_intent_classify", text=text)
     
     response = client.chat.completions.create(
         model="gemma3:4b",
@@ -335,20 +334,7 @@ def answer_database_question(question, persona=PERSONA_MANAGER):
         """
     else:
         # Use LLM to generate SQL
-        system_prompt = f"""You are a SQL expert for DuckDB. Generate SQL ONLY.
-        
-Table: chemistry_tidy
-Columns: {schema}
-
-RULES:
-1. Output SQL only - no markdown, no explanation
-2. Arabic columns need double quotes: "اسم العينة"
-3. Use ILIKE for text search
-4. Unique samples: COUNT(DISTINCT "كود العينة")
-
-User persona: {persona}
-- Manager: needs KPIs, counts, summaries
-- Analyst: needs detailed breakdowns"""
+        system_prompt = load_prompt("voice_sql_gen", schema=schema, persona=persona)
         
         response = client.chat.completions.create(
             model="gemma3:4b",
@@ -410,10 +396,7 @@ User persona: {persona}
 
 def extract_lab_data(user_text):
     """Extract structured data for lab entry"""
-    system_prompt = """أنت مساعد مختبر LARS.
-استخرج: (اسم_المبيد، التركيز، كود_العينة، نوع_المحصول).
-إذا لم يذكر المستخدم حقل، ضعه null.
-أجب بـ JSON فقط."""
+    system_prompt = load_prompt("voice_data_extraction")
     
     response = client.chat.completions.create(
         model="gemma3:4b",
