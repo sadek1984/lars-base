@@ -1,0 +1,11 @@
+.git
+.gitignore
+__pycache__
+*.pyc
+n8n-docker
+docker
+docs
+specs
+scripts
+*.xlsx
+!src/LARS/data/lars_data.duckdb
