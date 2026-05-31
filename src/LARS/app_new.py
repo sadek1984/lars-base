@@ -156,10 +156,10 @@ def main() -> None:
 
     # Load initial data once per session
     if not st.session_state.data_loaded:
-        data_path = Path(__file__).parent / "data" / "processed_data_with_neighborhood.xlsx"
+        data_path = Path(__file__).parent / "data" / "6_months.xlsx"
         if data_path.exists():
             try:
-                st.session_state.df = pd.read_excel(data_path)
+                st.session_state.df = pd.read_excel(data_path, header=1)
                 st.session_state.data_loaded = True
             except Exception as exc:
                 st.warning(f"⚠️ Could not load initial data: {exc}")
