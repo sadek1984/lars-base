@@ -237,48 +237,22 @@ class CoreQueryEngine(AdvancedHandlersMixin):
                 f"Could not open database '{db_path.name}': {exc}"
             ) from exc
     
-
-    def _build_sample_filter(self, samples: list) -> str:
+    def _build_sample_filter(self, samples: List[str]) -> str:
         """
-        Build SQL WHERE clause for "اسم العينة".
-
-        YOUR DATABASE stores ARABIC names ('طماطم', 'خيار', ...).
-        _detect_sample_types() returns English canonical values ('Tomato').
-        This method converts them back to Arabic substrings for the LIKE.
-
-        Falls back to English substring search too, so the filter works
-        even if the DB is later migrated to English names.
+        Build SQL WHERE conditions for sample names.
+        DB stores ENGLISH names in "اسم العينة", so this is straightforward LIKE matching.
+        Also checks "نوع العينة" (sample type category).
         """
         if not samples:
             return "1=1"
-
-        # Build reverse map: English canonical → list of Arabic query keys
-        # e.g. 'Tomato' → ['طماطم', 'طماطم شيري']  (only the base match matters)
-        from modules.mappings import SAMPLE_CORRECTIONS
-
-        en_to_ar: dict = {}
-        for ar_key, en_val in SAMPLE_CORRECTIONS.items():
-            en_to_ar.setdefault(en_val, []).append(ar_key)
-
         conditions = []
         for s in samples:
-            # ── A: Arabic LIKE (what your DB actually has) ──────────────
-            arabic_variants = en_to_ar.get(s, [])
-            # Use TRIM() on the column side to handle accidental spaces
-            for ar in arabic_variants:
-                conditions.append(
-                    f"TRIM(\"اسم العينة\") LIKE '%{ar}%'"
-                )
-
-            # ── B: English LIKE fallback (future-proof) ─────────────────
+            # s is already the English DB value from _detect_sample_types
             conditions.append(f"\"اسم العينة\" LIKE '%{s}%'")
-
-            # ── C: Category column (نوع العينة) ─────────────────────────
+            # Also try نوع العينة (sample type / category column)
             conditions.append(f"\"نوع العينة\" LIKE '%{s}%'")
-
         return f"({' OR '.join(conditions)})"
-
-
+    
     def _normalize_query(self, query: str) -> str:
         """Normalize query: apply dialect synonyms for English."""
         query_lower = query.lower().strip()

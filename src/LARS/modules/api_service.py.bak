@@ -145,7 +145,6 @@ _SESSION_DEFAULTS: Dict[str, Any] = {
     "intro_shown": False,
     "current_page": "🏠 Dashboard Overview",
     "data_loaded": False,
-    "query_engine": "sql",
 }
 
 
