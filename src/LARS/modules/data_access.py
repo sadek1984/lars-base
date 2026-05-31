@@ -34,7 +34,7 @@ _MODULE_DIR = Path(__file__).resolve().parent          # src/LARS/modules/
 _LARS_ROOT = _MODULE_DIR.parent                        # src/LARS/
 _DATA_DIR = _LARS_ROOT / "data"
 _DUCKDB_PATH = _DATA_DIR / "lars_data.duckdb"
-_EXCEL_PATH = _DATA_DIR / "processed_data_with_neighborhood.xlsx"
+_EXCEL_PATH = _DATA_DIR / "6_months.xlsx"
 
 
 def _resolve_data_path(filename: str) -> Optional[Path]:
@@ -68,7 +68,7 @@ def _resolve_data_path(filename: str) -> Optional[Path]:
 # ============================================================================
 
 def load_dataframe(
-    filename: str = "processed_data_with_neighborhood.xlsx",
+    filename: str = "6_months.xlsx",
 ) -> Optional[pd.DataFrame]:
     """Load the primary analysis DataFrame.
 

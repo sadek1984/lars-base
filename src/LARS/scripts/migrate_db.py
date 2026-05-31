@@ -25,7 +25,7 @@ def migrate_excel_to_duckdb(force=False):
     """Convert Excel file to DuckDB database"""
     
     # Configuration (files are in ../data/ folder)
-    excel_file = Path(__file__).parent.parent / 'data' / 'processed_data_with_neighborhood.xlsx'
+    excel_file = Path(__file__).parent.parent / 'data' / '6_months.xlsx'
     db_file = Path(__file__).parent.parent / 'data' / 'lars_data.duckdb'
     
     print("=" * 60)
