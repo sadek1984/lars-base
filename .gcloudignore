@@ -9,3 +9,4 @@ specs
 scripts
 *.xlsx
 !src/LARS/data/lars_data.duckdb
+!src/LARS/data/6_months.xlsx

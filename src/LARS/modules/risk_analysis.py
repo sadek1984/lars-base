@@ -19,6 +19,10 @@ try:
     RISK_SERVICE_AVAILABLE = True
 except ImportError as e:
     RISK_SERVICE_AVAILABLE = False
+    class RiskAssessmentService:
+        pass
+    get_population_options = lambda: []
+    get_population_weight = lambda x: 60
     print(f"⚠️ Risk assessment service not available: {e}")
 
 

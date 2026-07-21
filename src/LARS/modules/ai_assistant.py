@@ -954,11 +954,13 @@ def show_chat_page(api_client):
         
         model_choice = st.radio(
             "Select AI Model",
-            ["🟢 OpenAI (gpt-4o-mini)", "🔵 Ollama (gemma3:4b)"],
-            help="Choose between OpenAI API or local Ollama model (gemma is fast & optimized for multilingual)"
+            ["🔮 Gemini (2.0-flash-exp)", "🟢 OpenAI (gpt-4o-mini)", "🔵 Ollama (gemma3:4b)"],
+            help="Choose between Gemini, OpenAI API, or local Ollama model"
         )
         
-        if model_choice == "🟢 OpenAI (gpt-4o-mini)":
+        if model_choice == "🔮 Gemini (2.0-flash-exp)":
+            st.info("Using Google Gemini")
+        elif model_choice == "🟢 OpenAI (gpt-4o-mini)":
             st.info("Using OpenAI Cloud API")
         else:
             st.info("Using Local Ollama Model")
@@ -967,7 +969,41 @@ def show_chat_page(api_client):
     model = None
     model_name = None
     
-    if model_choice == "🟢 OpenAI (gpt-4o-mini)":
+    if model_choice == "🔮 Gemini (2.0-flash-exp)":
+        # Gemini Configuration — uses ADC (Cloud Run service account or
+        # GOOGLE_APPLICATION_CREDENTIALS locally), same pattern as LabSense.
+        project_id = os.environ.get('PROJECT_ID', 'gen-lang-client-0519489172')
+        location = os.environ.get('LOCATION', 'us-central1')
+
+        try:
+            from google import genai as vertex_genai
+            client = vertex_genai.Client(
+                vertexai=True,
+                project=project_id,
+                location=location,
+            )
+            model_name = "gemini-2.5-flash"
+
+            class _GeminiWrapper:
+                """Thin wrapper so generate_content(prompt) works like before."""
+                def __init__(self, client, model_name):
+                    self._client = client
+                    self._model_name = model_name
+
+                def generate_content(self, prompt):
+                    return self._client.models.generate_content(
+                        model=self._model_name,
+                        contents=prompt,
+                    )
+
+            model = _GeminiWrapper(client, model_name)
+            st.success(f"✅ Gemini model ready ({model_name}, via ADC)")
+        except Exception as e:
+            st.error(f"Failed to initialize Gemini client: {e}")
+            st.info("Ensure the Cloud Run service account has the `roles/aiplatform.user` role.")
+            return
+    
+    elif model_choice == "�� OpenAI (gpt-4o-mini)":
         # OpenAI Configuration
         api_key = os.environ.get('OPENAI_API_KEY')
         
