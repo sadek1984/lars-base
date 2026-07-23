@@ -259,7 +259,13 @@ def process_data_query_sql(query: str, model, include_risk: bool = False):
             response_text, result_df, generated_sql = (
                 engine.process_with_gemini_fallback(query, model)
             )
-
+        # --- DEBUG: show generated SQL ---
+        with st.expander("🔍 Debug: Generated SQL", expanded=True):
+            st.code(generated_sql, language="sql")
+            if result_df is not None:
+                st.write(f"Rows returned: {len(result_df)}")
+                st.write(f"Columns: {list(result_df.columns)}")
+        # --- END DEBUG ---
         _render_sql_query_result(response_text, result_df, generated_sql, query_lang)
 
     except Exception as exc:
@@ -304,18 +310,9 @@ def _render_sql_query_result(
         except Exception:
             pass
 
-        st.dataframe(
-            translate_dataframe(result_df, query_lang),
-            use_container_width=True,
-            hide_index=True,
-        )
+        
         csv = result_df.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            "📥 Download Results (CSV)",
-            data=csv,
-            file_name="lars_results.csv",
-            mime="text/csv",
-        )
+        
 
     elif not is_unknown:
         st.markdown(response_text)
@@ -332,7 +329,9 @@ def _render_sql_query_result(
             st.code(generated_sql, language="sql")
             st.caption("This SQL was AI-generated and executed on DuckDB.")
 
-
+    # Persist for display_stored_results_with_charts(), but don't render here
+    st.session_state.last_query_result = result_df
+    st.session_state.last_query = generated_sql or ""
 
 def process_data_query(query: str, df: pd.DataFrame, model, include_risk: bool = False):
     """Process data analysis queries using Gemini with risk assessment option"""

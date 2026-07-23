@@ -479,6 +479,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             SELECT 
                 "كود العينة" as sample_code,
                 "اسم العينة" as sample_name,
+                "الحى" as neighborhood,
                 MAX(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) as has_violation,
                 MAX(CASE WHEN is_detected = 1 THEN 1 ELSE 0 END) as has_detection,
                 COUNT(CASE WHEN is_detected = 1 THEN 1 END) as pesticide_count
@@ -486,36 +487,40 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             WHERE 1=1
             {neighborhood_filter}
             {category_filter}
-            GROUP BY "كود العينة", "اسم العينة"
+            GROUP BY "كود العينة", "اسم العينة", "الحى"
         )
         SELECT 
+            neighborhood,
             sample_name AS sample_type,
             COUNT(*) AS total_count,
             SUM(has_violation) AS above_limit,
             SUM(CASE WHEN has_violation = 0 THEN 1 ELSE 0 END) AS below_limit,
             SUM(CASE WHEN has_detection = 0 THEN 1 ELSE 0 END) AS pesticide_free
         FROM sample_status
-        GROUP BY sample_name
-        ORDER BY total_count DESC
+        GROUP BY neighborhood, sample_name
+        ORDER BY neighborhood, total_count DESC
         """
         
         df = con.execute(sql).df()
         con.close()
 
         if not df.empty:
-            total       = int(df['total_count'].sum())    if 'total_count'    in df.columns else len(df)
-            total_above = int(df['above_limit'].sum())    if 'above_limit'    in df.columns else 0
-            total_below = int(df['below_limit'].sum())    if 'below_limit'    in df.columns else 0
-            total_clean = int(df['pesticide_free'].sum()) if 'pesticide_free' in df.columns else 0
-            
-            response = f"📊 **Comprehensive Analysis — {category_name} in {hood_display}**\n\n"
-            response += f"✅ **Total samples:** {total}\n"
-            response += f"🔴 **Above limit:** {total_above} (contain at least one violating pesticide)\n"
-            response += f"🟢 **Below limit:** {total_below} (compliant)\n"
-            response += f"   • of which **{total_clean}** are completely pesticide-free\n"
-            response += f"   • and **{total_below - total_clean}** contain pesticides within allowed limits\n\n"
-            response += df.to_markdown(index=False)
-            
+            response = f"�� **Comprehensive Analysis — {category_name} in {hood_display}**\n\n"
+            for hood, group in df.groupby('neighborhood'):
+                total       = int(group['total_count'].sum())
+                total_above = int(group['above_limit'].sum())
+                total_below = int(group['below_limit'].sum())
+                total_clean = int(group['pesticide_free'].sum())
+
+                response += f"### 📍 {hood}\n"
+                response += f"✅ **Total samples:** {total}\n"
+                response += f"🔴 **Above limit:** {total_above} (contain at least one violating pesticide)\n"
+                response += f"🟢 **Below limit:** {total_below} (compliant)\n"
+                response += f"   • of which **{total_clean}** are completely pesticide-free\n"
+                response += f"   • and **{total_below - total_clean}** contain pesticides within allowed limits\n\n"
+                response += group.drop(columns='neighborhood').to_markdown(index=False)
+                response += "\n\n"
+
             return response, df
         else:
             response = f"⚠️ No {category_name} samples found in {hood_display}"
@@ -786,6 +791,20 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         detected_samples      = ctx['detected_samples']
         detected_neighborhoods = ctx['detected_neighborhoods']
         detected_pesticide    = ctx['detected_pesticide']
+
+        # ── Tier 0: Explicit compliance-status override ──────────────────────
+        # "غير مطابقة" / "مطابقة" + neighborhood(s) must route straight to the
+        # compliance handler — bypass semantic/intent tiers, which tend to
+        # misclassify these as generic "comprehensive neighborhood" queries.
+        non_compliant_ar_kws = ['غير مطابقة', 'الغير مطابقة', 'غير المطابقة']
+        compliant_ar_kws = ['مطابقة']
+        is_non_compliant_ar = any(kw in query for kw in non_compliant_ar_kws)
+        is_compliant_ar = (not is_non_compliant_ar) and any(kw in query for kw in compliant_ar_kws)
+
+        if (is_non_compliant_ar or is_compliant_ar) and detected_neighborhoods:
+            return self._handle_count_samples_compliance(
+                detected_samples, detected_neighborhoods, is_non_compliant_ar
+            )
 
         # ── Tier 1: Semantic pattern recognition ──────────────────────────────
         if self.semantic_recognizer:
@@ -1465,6 +1484,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         # Query using sample_result column
         sql = f"""
         SELECT 
+            "الحى" AS neighborhood,
             "اسم العينة" AS sample_type,
             sample_result AS result,
             COUNT(DISTINCT "كود العينة") AS sample_count
@@ -1472,8 +1492,8 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         WHERE 1=1
         {sample_filter}
         {neighborhood_filter}
-        GROUP BY "اسم العينة", sample_result
-        ORDER BY sample_count DESC
+        GROUP BY "الحى", "اسم العينة", sample_result
+        ORDER BY "الحى", sample_count DESC
         """
         
         df = con.execute(sql).df()
@@ -1484,22 +1504,29 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             type_display += f" in {' + '.join(neighborhoods)}"
         
         if not df.empty:
-            compliant     = df[df['result'].str.strip() == 'Compliant']['sample_count'].sum()
-            non_compliant = df[df['result'].str.strip() == 'Non-Compliant']['sample_count'].sum()
-            unknown       = df[df['result'].isna()]['sample_count'].sum()
-            total = int(df['sample_count'].sum())
-            
-            status_text  = 'Non-Compliant' if is_non_compliant else 'Compliant'
-            target_count = int(non_compliant) if is_non_compliant else int(compliant)
-            
+            status_text   = 'Non-Compliant' if is_non_compliant else 'Compliant'
+            target_result = 'Non-Compliant' if is_non_compliant else 'Compliant'
+
             response = f"📊 **{status_text} Samples — {type_display}:**\n\n"
-            response += f"✅ Total unique samples: **{total}**\n"
-            response += f"🟢 Compliant: **{int(compliant)}**\n"
-            response += f"🔴 Non-Compliant: **{int(non_compliant)}**\n"
-            if unknown > 0:
-                response += f"⚪ Unknown: **{int(unknown)}**\n"
-            response += f"\n📌 **{status_text}: {target_count}**\n\n"
-            response += df.to_markdown(index=False)
+            for hood, group in df.groupby('neighborhood'):
+                compliant     = int(group[group['result'].str.strip() == 'Compliant']['sample_count'].sum())
+                non_compliant = int(group[group['result'].str.strip() == 'Non-Compliant']['sample_count'].sum())
+                unknown       = int(group[group['result'].isna()]['sample_count'].sum())
+                total         = int(group['sample_count'].sum())
+                target_count  = non_compliant if is_non_compliant else compliant
+
+                response += f"### 📍 {hood}\n"
+                response += f"✅ Total unique samples: **{total}**\n"
+                response += f"🟢 Compliant: **{compliant}**\n"
+                response += f"🔴 Non-Compliant: **{non_compliant}**\n"
+                if unknown > 0:
+                    response += f"⚪ Unknown: **{unknown}**\n"
+                response += f"\n📌 **{status_text}: {target_count}**\n\n"
+
+                target_df = group[group['result'].str.strip() == target_result]
+                if not target_df.empty:
+                    response += target_df.drop(columns='neighborhood').to_markdown(index=False)
+                response += "\n\n"
         else:
             response = f"⚠️ No samples found for **{type_display}**"
         
@@ -2073,6 +2100,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             SELECT 
                 "كود العينة" as sample_code,
                 "اسم العينة" as sample_name,
+                "الحى" as neighborhood,
                 MAX(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) as has_violation,
                 MAX(CASE WHEN is_detected = 1 THEN 1 ELSE 0 END) as has_detection,
                 COUNT(CASE WHEN is_detected = 1 THEN 1 END) as pesticide_count
@@ -2080,35 +2108,35 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             WHERE 1=1
             {neighborhood_filter}
             {category_filter}
-            GROUP BY "كود العينة", "اسم العينة"
+            GROUP BY "كود العينة", "اسم العينة", "الحى"
         )
         SELECT 
+            neighborhood,
             sample_name AS sample_type,
             COUNT(*) AS total_count,
             SUM(has_violation) AS above_limit,
             SUM(CASE WHEN has_violation = 0 THEN 1 ELSE 0 END) AS below_limit,
             SUM(CASE WHEN has_detection = 0 THEN 1 ELSE 0 END) AS pesticide_free
         FROM sample_status
-        GROUP BY sample_name
-        ORDER BY total_count DESC
+        GROUP BY neighborhood, sample_name
+        ORDER BY neighborhood, total_count DESC
         """
         
         df = con.execute(sql).df()
         con.close()
         
         location_desc = f" in {' + '.join(neighborhoods)}"
-        
         if not df.empty:
-            total       = int(df['total_count'].sum())
-            total_above = int(df['above_limit'].sum())
-            total_below = int(df['below_limit'].sum())
-            total_clean = int(df['pesticide_free'].sum())
-            
             response = f"📊 **{category_name}{location_desc}:**\n\n"
-            response += f"✅ Total samples: **{total}**\n"
-            response += f"🔴 Above limit: **{total_above}**\n"
-            response += f"🟢 Below limit: **{total_below}** ({total_clean} pesticide-free)\n\n"
-            response += df.to_markdown(index=False)
+            for hood, group in df.groupby('neighborhood'):
+                total       = int(group['total_count'].sum())
+                total_above = int(group['above_limit'].sum())
+                total_below = int(group['below_limit'].sum())
+                total_clean = int(group['pesticide_free'].sum())
+                response += f"### 📍 {hood}\n"
+                response += f"✅ Total samples: **{total}**\n"
+                response += f"🔴 Above limit: **{total_above}**\n"
+                response += f"🟢 Below limit: **{total_below}** ({total_clean} pesticide-free)\n\n"
         else:
             response = f"⚠️ No {category_name} samples found{location_desc}"
         
