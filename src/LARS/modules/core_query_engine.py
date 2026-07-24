@@ -2603,20 +2603,3 @@ Key columns:
         response += "• Search for fipronil in beans\n"
         response += "• Samples containing 6 pesticides\n"
         return response
-
-
-# Create singleton instance
-_engine = None
-
-def get_query_engine(db_path: str = None, enable_llm: bool = True) -> CoreQueryEngine:
-    """
-    Get query engine singleton
-    
-    Args:
-        db_path: Database path
-        enable_llm: Enable LLM fallback for unknown queries
-    """
-    global _engine
-    if _engine is None:
-        _engine = CoreQueryEngine(db_path, enable_llm_fallback=enable_llm)
-    return _engine
