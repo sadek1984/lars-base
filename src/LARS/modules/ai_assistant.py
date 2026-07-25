@@ -332,7 +332,16 @@ def _render_sql_query_result(
     # Persist for display_stored_results_with_charts(), but don't render here
     st.session_state.last_query_result = result_df
     st.session_state.last_query = generated_sql or ""
+    
+    # ── NEW: Get and show trust badge ──
+    badge = get_trust_badge(generated_sql)
+    st.markdown(f"{badge}")
 
+    st.markdown(response_text)
+
+    if result_df is not None:
+        st.dataframe(result_df)
+    
 def process_data_query(query: str, df: pd.DataFrame, model, include_risk: bool = False):
     """Process data analysis queries using Gemini with risk assessment option"""
     
