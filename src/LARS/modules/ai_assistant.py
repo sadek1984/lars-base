@@ -6,6 +6,7 @@ import re
 import json
 import requests
 import duckdb
+import io
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, Optional
@@ -28,7 +29,6 @@ except ImportError:
     RISK_WINDOWS_AVAILABLE = False
 
 # Semantic pattern recognizer is used inside core_query_engine.py, no need to load it here at module level.
-
 
 
 def _chart_cols(df):
@@ -259,13 +259,13 @@ def process_data_query_sql(query: str, model, include_risk: bool = False):
             response_text, result_df, generated_sql = (
                 engine.process_with_gemini_fallback(query, model)
             )
-        # --- DEBUG: show generated SQL ---
-        with st.expander("🔍 Debug: Generated SQL", expanded=True):
-            st.code(generated_sql, language="sql")
-            if result_df is not None:
-                st.write(f"Rows returned: {len(result_df)}")
-                st.write(f"Columns: {list(result_df.columns)}")
-        # --- END DEBUG ---
+        # # --- DEBUG: show generated SQL ---
+        # with st.expander("🔍 Debug: Generated SQL", expanded=True):
+        #     st.code(generated_sql, language="sql")
+        #     if result_df is not None:
+        #         st.write(f"Rows returned: {len(result_df)}")
+        #         st.write(f"Columns: {list(result_df.columns)}")
+        # # --- END DEBUG ---
         _render_sql_query_result(response_text, result_df, generated_sql, query_lang)
 
     except Exception as exc:
@@ -309,8 +309,20 @@ def _render_sql_query_result(
         except Exception:
             pass
 
-        csv = result_df.to_csv(index=False).encode("utf-8")
-        st.download_button("Download CSV", csv, "results.csv", "text/csv")
+        # ── Excel export ──
+        try:
+            excel_buffer = io.BytesIO()
+            result_df.to_excel(excel_buffer, index=False, engine="openpyxl")
+            excel_buffer.seek(0)
+            st.download_button(
+                label="📥 Download Excel",
+                data=excel_buffer,
+                file_name="results.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="download_excel_sql_query",
+            )
+        except Exception as e:
+            st.warning(f"Could not generate Excel file: {e}")
 
     elif not is_unknown:
         st.markdown(response_text)
@@ -413,7 +425,6 @@ def process_data_query(query: str, df: pd.DataFrame, model, include_risk: bool =
             
             # 🔒 SCHEMA-ONLY PROMPTING - Privacy Protection
             # Generate DataFrame metadata WITHOUT exposing actual sensitive data
-            import io
             
             # Get column types as markdown table
             dtypes_markdown = df.dtypes.to_frame('Type').to_markdown()
@@ -669,13 +680,16 @@ def process_data_query(query: str, df: pd.DataFrame, model, include_risk: bool =
                                 st.info(f"📊 Total individual samples found: **{len(detailed_display)}** samples")
                                 st.dataframe(detailed_display, use_container_width=True)
                                 
-                                # Add download button for detailed data
-                                csv = detailed_display.to_csv(index=False).encode('utf-8-sig')
+                                # Add download button for detailed data (Excel)
+                                excel_buffer = io.BytesIO()
+                                detailed_display.to_excel(excel_buffer, index=False, engine="openpyxl")
+                                excel_buffer.seek(0)
                                 st.download_button(
-                                    label="📥 Download Detailed Data (CSV)",
-                                    data=csv,
-                                    file_name=f"detailed_samples_{neighborhood_found}.csv",
-                                    mime="text/csv",
+                                    label="📥 Download Detailed Data (Excel)",
+                                    data=excel_buffer,
+                                    file_name=f"detailed_samples_{neighborhood_found}.xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    key="download_excel_detailed_samples",
                                 )
                     except Exception as e:
                         st.info(f"💡 Showing grouped summary. Individual samples: {st.session_state.get('last_query', 'N/A')}")
@@ -705,12 +719,15 @@ def process_data_query(query: str, df: pd.DataFrame, model, include_risk: bool =
                                 st.write(f"**Max Exceedance:** {max_exc:.2f}x MRL")
                                 st.write(f"**Average Exceedance:** {avg_exc:.2f}x MRL")
                 
-                csv = result.to_csv(index=False)
+                excel_buffer = io.BytesIO()
+                result.to_excel(excel_buffer, index=False, engine="openpyxl")
+                excel_buffer.seek(0)
                 st.download_button(
-                    label="📥 Download Results as CSV",
-                    data=csv,
-                    file_name="analysis_results.csv",
-                    mime="text/csv"
+                    label="📥 Download Results as Excel",
+                    data=excel_buffer,
+                    file_name="analysis_results.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="download_excel_pandas_results"
                 )
                 
                 # Show code in expander for successful queries
@@ -1847,5 +1864,3 @@ def upload_iso_document_ui(api_client, uploaded_file, doc_type: str, project_id:
             st.success(f"✅ Successfully uploaded and indexed: {uploaded_file.name}")
         except Exception as e:
             st.error(f"❌ Upload failed: {e}")
-
-
