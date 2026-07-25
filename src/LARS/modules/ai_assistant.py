@@ -14,7 +14,7 @@ from modules.mappings import PESTICIDE_AR_TO_EN, translate_pesticide
 from modules.translation_utils import get_language_system_prompt
 from modules.prompt_loader import load_prompt
 import logging
-
+from modules.core_query_engine import get_trust_badge
 # Import risk window components
 try:
     from modules.risk_windows import (
@@ -272,8 +272,6 @@ def process_data_query_sql(query: str, model, include_risk: bool = False):
         st.error(f"❌ Error: {exc}")
         with st.expander("🔍 Debug Details"):
             st.exception(exc)
-
-
 def _render_sql_query_result(
     response_text: str,
     result_df,
@@ -292,7 +290,8 @@ def _render_sql_query_result(
     if result_df is not None and not result_df.empty:
         st.success("✅ Query processed successfully!")
         st.markdown(response_text)
-
+        badge = get_trust_badge(generated_sql)
+        st.markdown(badge)
         # ── Optional summary metrics (best-effort, never crashes) ──
         try:
             metric_cols = [
@@ -310,9 +309,8 @@ def _render_sql_query_result(
         except Exception:
             pass
 
-        
         csv = result_df.to_csv(index=False).encode("utf-8")
-        
+        st.download_button("Download CSV", csv, "results.csv", "text/csv")
 
     elif not is_unknown:
         st.markdown(response_text)
@@ -332,16 +330,10 @@ def _render_sql_query_result(
     # Persist for display_stored_results_with_charts(), but don't render here
     st.session_state.last_query_result = result_df
     st.session_state.last_query = generated_sql or ""
-    
-    # ── NEW: Get and show trust badge ──
-    badge = get_trust_badge(generated_sql)
-    st.markdown(f"{badge}")
-
-    st.markdown(response_text)
 
     if result_df is not None:
         st.dataframe(result_df)
-    
+
 def process_data_query(query: str, df: pd.DataFrame, model, include_risk: bool = False):
     """Process data analysis queries using Gemini with risk assessment option"""
     
@@ -355,12 +347,12 @@ def process_data_query(query: str, df: pd.DataFrame, model, include_risk: bool =
             if include_risk:
                 risk_instruction = """
                 
-Also include risk assessment calculations:
-- Calculate exceedance ratio (Result/MRL) 
-- Add 'Risk_Level' column: High (>2x MRL), Medium (1-2x MRL), Low (<1x MRL)
-- Include health risk indicators if possible
-- Show risk summary statistics
-"""
+                        Also include risk assessment calculations:
+                        - Calculate exceedance ratio (Result/MRL) 
+                        - Add 'Risk_Level' column: High (>2x MRL), Medium (1-2x MRL), Low (<1x MRL)
+                        - Include health risk indicators if possible
+                        - Show risk summary statistics
+                """
             
             # First, detect the query type to apply the right analysis approach
             query_lower = query.lower()
@@ -374,50 +366,50 @@ Also include risk assessment calculations:
             # Build context-specific instructions
             if is_trend_query:
                 specific_instructions = """
-**QUERY TYPE DETECTED: TREND/YEARLY ANALYSIS**
-- Group data by 'year' column
-- Calculate counts, rates, or averages per year
-- Result should show trends: year | metric1 | metric2 | ...
-- Sort by year ascending
-- DO NOT use Arabic column names for this query
-- Example columns: 'year', 'total_samples', 'violations', 'compliance_rate'
-"""
+                        **QUERY TYPE DETECTED: TREND/YEARLY ANALYSIS**
+                        - Group data by 'year' column
+                        - Calculate counts, rates, or averages per year
+                        - Result should show trends: year | metric1 | metric2 | ...
+                        - Sort by year ascending
+                        - DO NOT use Arabic column names for this query
+                        - Example columns: 'year', 'total_samples', 'violations', 'compliance_rate'
+                """
             elif is_pesticide_query:
                 specific_instructions = """
-**QUERY TYPE DETECTED: PESTICIDE ANALYSIS**
-- Group by 'pesticide_standardized' or similar pesticide column
-- Count violations using 'is_compliant' == 0 or 'result' containing 'غير مطابق'
-- Show: pesticide name | total tests | violations | violation_rate
-- Sort by violations or violation_rate descending
-- DO NOT use Arabic column names unless specifically asked
-- Show top 10-20 results
-"""
+                        **QUERY TYPE DETECTED: PESTICIDE ANALYSIS**
+                        - Group by 'pesticide_standardized' or similar pesticide column
+                        - Count violations using 'is_compliant' == 0 or 'result' containing 'غير مطابق'
+                        - Show: pesticide name | total tests | violations | violation_rate
+                        - Sort by violations or violation_rate descending
+                        - DO NOT use Arabic column names unless specifically asked
+                        - Show top 10-20 results
+                """
             elif is_compliance_query:
                 specific_instructions = """
-**QUERY TYPE DETECTED: COMPLIANCE ANALYSIS**
-- Calculate compliance metrics (compliant vs non-compliant)
-- Use 'is_compliant' column if available (1=compliant, 0=violation)
-- Or check 'result' column for 'مطابق' (compliant) vs 'غير مطابق' (non-compliant)
-- Show rates as percentages
-- Group by the relevant dimension (year, vegetable, pesticide, etc.)
-"""
+                        **QUERY TYPE DETECTED: COMPLIANCE ANALYSIS**
+                        - Calculate compliance metrics (compliant vs non-compliant)
+                        - Use 'is_compliant' column if available (1=compliant, 0=violation)
+                        - Or check 'result' column for 'مطابق' (compliant) vs 'غير مطابق' (non-compliant)
+                        - Show rates as percentages
+                        - Group by the relevant dimension (year, vegetable, pesticide, etc.)
+                """
             elif is_vegetable_arabic_query:
                 specific_instructions = """
-**QUERY TYPE DETECTED: VEGETABLE STATISTICS (ARABIC FORMAT)**
-- ONLY use this format when user explicitly asks in Arabic or wants Arabic output
-- Group by vegetable (use 'vegetable_arabic' column)
-- Calculate: total samples, above limit, below limit
-- Use Arabic column names: 'عدد العينات', 'فوق الحد', 'تحت الحد'
-- Filter by neighborhood if mentioned in query
-"""
+                        **QUERY TYPE DETECTED: VEGETABLE STATISTICS (ARABIC FORMAT)**
+                        - ONLY use this format when user explicitly asks in Arabic or wants Arabic output
+                        - Group by vegetable (use 'vegetable_arabic' column)
+                        - Calculate: total samples, above limit, below limit
+                        - Use Arabic column names: 'عدد العينات', 'فوق الحد', 'تحت الحد'
+                        - Filter by neighborhood if mentioned in query
+                """
             else:
                 specific_instructions = """
-**QUERY TYPE: GENERAL ANALYSIS**
-- Analyze the data based on the specific question
-- Use appropriate groupby, aggregation, or filtering
-- Use English column names unless Arabic is specifically requested
-- Return a clear, well-formatted DataFrame
-"""
+                        **QUERY TYPE: GENERAL ANALYSIS**
+                        - Analyze the data based on the specific question
+                        - Use appropriate groupby, aggregation, or filtering
+                        - Use English column names unless Arabic is specifically requested
+                        - Return a clear, well-formatted DataFrame
+                """
             
             # 🔒 SCHEMA-ONLY PROMPTING - Privacy Protection
             # Generate DataFrame metadata WITHOUT exposing actual sensitive data

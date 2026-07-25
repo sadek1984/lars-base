@@ -2583,15 +2583,6 @@ Key columns:
                 )
 
             return response_text, df, generated_sql
-            def get_trust_badge(generated_sql: str | None) -> str:
-                """
-                Returns a trust-level badge based on which tier answered the query.
-                Tier 0/1 (template/pattern matched) never populate generated_sql.
-                Tier 2 (LLM SQL generation) always does.
-                """
-                if generated_sql is None:
-                    return "✅ Verified query"
-                return "🤖 AI-generated (verify results)"
             
             
 
@@ -2615,3 +2606,13 @@ Key columns:
         response += "• Search for fipronil in beans\n"
         response += "• Samples containing 6 pesticides\n"
         return response
+def get_trust_badge(generated_sql: str | None) -> str:
+                """
+                Returns a trust-level badge based on which tier answered the query.
+                Tier 0/1 (template/pattern matched) never populate generated_sql.
+                Tier 2 (LLM SQL generation) always does.
+                """
+                if generated_sql is None:
+                    return "✅ Verified query"
+                return "🤖 AI-generated (verify results)"
+            
