@@ -10,6 +10,8 @@ Features:
 - Pattern matching for common queries
 - LLM fallback for unknown queries
 - Egyptian & Saudi Arabic dialect support
+- Time-period detection (last N days/weeks/months/years) applied across
+  all handlers that make sense with a date filter
 """
 import re
 import duckdb
@@ -58,6 +60,27 @@ OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma3:4b-it-qat")
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Time-period detection helpers (module-level constants)
+# ══════════════════════════════════════════════════════════════════════════════
+_ARABIC_DIGITS = str.maketrans('٠١٢٣٤٥٦٧٨٩', '0123456789')
+
+_PERIOD_UNIT_MAP = {
+    'يوم': 'day', 'ايام': 'day', 'أيام': 'day', 'day': 'day', 'days': 'day',
+    'اسبوع': 'week', 'اسابيع': 'week', 'أسابيع': 'week', 'week': 'week', 'weeks': 'week',
+    'شهر': 'month', 'شهور': 'month', 'اشهر': 'month', 'أشهر': 'month', 'month': 'month', 'months': 'month',
+    'سنة': 'year', 'سنوات': 'year', 'عام': 'year', 'أعوام': 'year', 'year': 'year', 'years': 'year',
+}
+
+        
+_DUAL_FORMS = {
+    'يومين': ('day', 2),
+    'اسبوعين': ('week', 2),
+    'أسبوعين': ('week', 2),
+    'شهرين': ('month', 2),
+    'سنتين': ('year', 2),
+    'عامين': ('year', 2),
+}
 
 from modules.advanced_handlers import AdvancedHandlersMixin
 
@@ -70,6 +93,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
     - All query patterns from ai_assistant.py
     - LLM fallback for unknown queries
     - Dialect normalization (Egyptian + Saudi Arabic)
+    - Time-period filters (last N days/weeks/months/years)
     """
     
     def __init__(self, db_path: str = None, llm_client=None, enable_llm_fallback: bool = True):
@@ -363,7 +387,93 @@ class CoreQueryEngine(AdvancedHandlersMixin):
                 return en_name
                 
         return None
-    
+
+
+    def _parse_time_period(self, query: str) -> Optional[Tuple[int, str]]:
+        """
+        Parse time period from a query, returning (n, unit) or None.
+        Unit is one of: 'day', 'week', 'month', 'year'.
+        """
+        if not query:
+            return None
+
+        q = query.translate(_ARABIC_DIGITS)
+        q_lower = q.lower()
+
+        # 1. Dual forms
+        for dual_word, (unit, n) in _DUAL_FORMS.items():
+            if dual_word in q:
+                return n, unit
+
+        # 2. Numeric / implicit "last" patterns
+        m = re.search(
+            r'(?:اخر|آخر|last)\s*(\d+)?\s*'
+            r'(يوم(?!ين)|ايام|أيام|اسبوع(?!ين)|اسابيع|أسابيع|شهر(?!ين)|شهور|اشهر|أشهر|سنة|سنوات|عام(?!ين)|أعوام'
+            r'|day|days|week|weeks|month|months|year|years)',
+            q_lower
+        )
+        if m:
+            n = int(m.group(1)) if m.group(1) else 1
+            unit = _PERIOD_UNIT_MAP.get(m.group(2))
+            if unit and n > 0:
+                return n, unit
+
+        # 3. Fixed phrases
+        if any(p in q for p in ['الشهر الماضي', 'الشهر الفائت']):
+            return 1, 'month'
+        if any(p in q for p in ['السنة الماضية', 'العام الماضي']):
+            return 1, 'year'
+        if any(p in q for p in ['الاسبوع الماضي', 'الأسبوع الماضي']):
+            return 1, 'week'
+        if any(p in q for p in ['امس', 'أمس']):
+            return 1, 'day'
+
+        return None
+    def _detect_time_period(self, query: str) -> Optional[str]:
+        parsed = self._parse_time_period(query)
+        if parsed is None:
+            return None
+        n, unit = parsed
+        anchor = '(SELECT MAX(strptime("التاريخ", \'%d/%m/%Y\')) FROM chemistry_tidy)'
+        return f'AND strptime("التاريخ", \'%d/%m/%Y\') >= ({anchor} - INTERVAL {n} {unit})'
+        
+    def _get_anchor_date(self):
+        """Latest sample date actually present in chemistry_tidy — the same
+        anchor used by _detect_time_period()'s SQL filter, fetched once so
+        we can also render a human-readable date range in responses."""
+        try:
+            con = self._get_connection()
+            row = con.execute(
+                'SELECT MAX(strptime("التاريخ", \'%d/%m/%Y\')) AS anchor FROM chemistry_tidy'
+            ).fetchone()
+            con.close()
+            return row[0] if row and row[0] is not None else None
+        except Exception as exc:
+            logging.warning(f"Anchor date fetch failed: {exc}")
+            return None
+
+    def _period_label(self, query: str) -> Optional[str]:
+        parsed = self._parse_time_period(query)
+        if parsed is None:
+            return None
+        n, unit = parsed
+
+        anchor = self._get_anchor_date()
+        if anchor is None:
+            return None
+
+        from dateutil.relativedelta import relativedelta
+        if unit == 'day':
+            start = anchor - pd.Timedelta(days=n)
+        elif unit == 'week':
+            start = anchor - pd.Timedelta(weeks=n)
+        elif unit == 'month':
+            start = anchor - relativedelta(months=n)
+        else:  # year
+            start = anchor - relativedelta(years=n)
+
+        return f"من {start.strftime('%d/%m/%Y')} إلى {anchor.strftime('%d/%m/%Y')}"
+
     def _handle_facility_search(self, query: str) -> Tuple[str, pd.DataFrame]:
         """البحث عن العينات في منشأة معينة"""
         con = self._get_connection()
@@ -423,7 +533,8 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         return response, df
     
     def _handle_comprehensive_neighborhood(self, query: str, detected_samples: List[str], 
-                                          detected_neighborhoods: List[str]) -> Tuple[str, pd.DataFrame]:
+                                          detected_neighborhoods: List[str],
+                                          date_filter: Optional[str] = None) -> Tuple[str, pd.DataFrame]:
         """تحليل شامل للعينات في حي معين مع عرض الأنواع والعدد وفوق/تحت الحد"""
         con = self._get_connection()
         
@@ -471,6 +582,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             category_name = " + ".join(detected_samples)
         
         hood_display = " + ".join(detected_neighborhoods)
+        date_clause = date_filter or ""
         logging.info(f"📊 تحليل شامل لـ {category_name} في حي {hood_display}")
         
         # Comprehensive SQL
@@ -487,6 +599,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             WHERE 1=1
             {neighborhood_filter}
             {category_filter}
+            {date_clause}
             GROUP BY "كود العينة", "اسم العينة", "الحى"
         )
         SELECT 
@@ -529,7 +642,8 @@ class CoreQueryEngine(AdvancedHandlersMixin):
     def _route_by_semantic_pattern(self, pattern_type: str, query: str, query_normalized: str,
                                    query_lower: str, detected_samples: List[str],
                                    detected_neighborhoods: List[str], 
-                                   detected_pesticide: Optional[str]) -> Optional[Tuple[str, pd.DataFrame]]:
+                                   detected_pesticide: Optional[str],
+                                   date_filter: Optional[str] = None) -> Optional[Tuple[str, pd.DataFrame]]:
         """
         Route query to appropriate handler based on semantic pattern type.
         Returns None if pattern cannot be handled (falls back to keyword matching).
@@ -552,20 +666,20 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             if pattern_type == 'count_above_limit':
                 # _handle_count_samples_limit(samples: List, neighborhoods: List, is_above: bool)
                 samples = detected_samples if detected_samples else ['']
-                return self._handle_count_samples_limit(samples, detected_neighborhoods, True)
+                return self._handle_count_samples_limit(samples, detected_neighborhoods, True, date_filter=date_filter)
             
             elif pattern_type == 'count_below_limit':
                 samples = detected_samples if detected_samples else ['']
-                return self._handle_count_samples_limit(samples, detected_neighborhoods, False)
+                return self._handle_count_samples_limit(samples, detected_neighborhoods, False, date_filter=date_filter)
             
             elif pattern_type == 'simple_count':
                 if detected_samples:
                     # Return both above and below (is_above=None means show both)
-                    return self._handle_count_samples_limit(detected_samples, detected_neighborhoods, None)
+                    return self._handle_count_samples_limit(detected_samples, detected_neighborhoods, None, date_filter=date_filter)
             
             elif pattern_type == 'comprehensive_analysis':
                 if detected_samples:
-                    return self._handle_comprehensive_analysis(detected_samples[0])
+                    return self._handle_comprehensive_analysis(detected_samples[0], date_filter=date_filter)
             
             elif pattern_type == 'pesticide_specific':
                 if detected_pesticide and detected_samples:
@@ -585,10 +699,10 @@ class CoreQueryEngine(AdvancedHandlersMixin):
                             
                         return self._handle_sample_pesticide_limit(
                             detected_samples, detected_pesticide, True,
-                            limit_filter=limit_filter, limit_desc=limit_desc
+                            limit_filter=limit_filter, limit_desc=limit_desc, date_filter=date_filter
                         )
                     
-                    return self._handle_find_pesticide_in_sample(detected_pesticide, detected_samples)
+                    return self._handle_find_pesticide_in_sample(detected_pesticide, detected_samples, date_filter=date_filter)
             
             elif pattern_type == 'pesticide_limit_specific':
                 if detected_pesticide and detected_samples:
@@ -610,16 +724,16 @@ class CoreQueryEngine(AdvancedHandlersMixin):
                         
                     return self._handle_sample_pesticide_limit(
                         detected_samples, detected_pesticide, is_above,
-                        limit_filter=limit_filter, limit_desc=limit_desc
+                        limit_filter=limit_filter, limit_desc=limit_desc, date_filter=date_filter
                     )
             
             elif pattern_type == 'list_pesticides':
                 if detected_samples:
-                    return self._handle_list_pesticides(detected_samples)
+                    return self._handle_list_pesticides(detected_samples, date_filter=date_filter)
             
             elif pattern_type == 'neighborhood_pesticides':
                 if detected_neighborhoods:
-                    return self._handle_neighborhood_pesticides(detected_neighborhoods, show_separately)
+                    return self._handle_neighborhood_pesticides(detected_neighborhoods, show_separately, date_filter=date_filter)
             
             elif pattern_type == 'samples_with_n_pesticides':
                 # Extract number from query
@@ -628,7 +742,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
                 if numbers:
                     n_pesticides = int(numbers[0])
                     if 1 <= n_pesticides <= 50:
-                        return self._handle_n_pesticides(n_pesticides, detected_samples)
+                        return self._handle_n_pesticides(n_pesticides, detected_samples, date_filter=date_filter)
             
             elif pattern_type == 'statistics':
                 if detected_samples:
@@ -640,7 +754,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
                 if detected_neighborhoods:
                     # Call the comprehensive neighborhood handler directly
                     # (it's implemented starting at line 603 in process())
-                    return self._handle_comprehensive_neighborhood(query, detected_samples, detected_neighborhoods)
+                    return self._handle_comprehensive_neighborhood(query, detected_samples, detected_neighborhoods, date_filter=date_filter)
             
             elif pattern_type == 'facility_search':
                 # Extract facility name from query
@@ -653,12 +767,13 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             logging.warning(f"Error in semantic routing: {e}")
             return None
     
-    def _dispatch_by_intent(self, intent, entities) -> Optional[Tuple[str, Optional[pd.DataFrame]]]:
+    def _dispatch_by_intent(self, intent, entities, date_filter: Optional[str] = None) -> Optional[Tuple[str, Optional[pd.DataFrame]]]:
         """Route an intent + entities to the correct handler.
         
         Args:
             intent: Intent enum from IntentRouter
             entities: QueryEntities object with extracted information
+            date_filter: SQL date filter fragment from _detect_time_period(), or None
         
         Returns:
             (response_text, dataframe) tuple or None if intent is UNKNOWN
@@ -675,58 +790,59 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             # ── Neighborhood + Category analysis ──
             if intent == Intent.COMPREHENSIVE_NEIGHBORHOOD or intent == Intent.LIST_TYPES_IN_NEIGHBORHOOD:
                 return self._handle_comprehensive_neighborhood(
-                    query, entities.samples, entities.neighborhoods
+                    query, entities.samples, entities.neighborhoods, date_filter=date_filter
                 )
             
             if intent == Intent.NEIGHBORHOOD_PESTICIDES:
                 return self._handle_neighborhood_pesticides(
-                    entities.neighborhoods, entities.wants_separately
+                    entities.neighborhoods, entities.wants_separately, date_filter=date_filter
                 )
             
             if intent == Intent.NEIGHBORHOOD_RANKING:
-                return self._handle_neighborhood_ranking()
+                return self._handle_neighborhood_ranking(date_filter=date_filter)
             
             # ── N pesticides ──
             if intent == Intent.COUNT_N_PESTICIDES and entities.n_pesticides:
                 if len(entities.n_pesticides) > 1 and entities.wants_separately:
-                    return self._handle_multiple_n_pesticides(entities.n_pesticides, entities.samples)
-                return self._handle_n_pesticides(entities.n_pesticides[-1], entities.samples)
+                    return self._handle_multiple_n_pesticides(entities.n_pesticides, entities.samples, date_filter=date_filter)
+                return self._handle_n_pesticides(entities.n_pesticides[-1], entities.samples, date_filter=date_filter)
             
             # ── Pesticide queries ──
             if intent == Intent.FIND_PESTICIDE_IN_SAMPLE and entities.pesticide and entities.samples:
                 if entities.wants_limit_breakdown:
                     return self._handle_sample_pesticide_limit(
                         entities.samples, entities.pesticide, 
-                        entities.is_above_limit if entities.is_above_limit is not None else True
+                        entities.is_above_limit if entities.is_above_limit is not None else True,
+                        date_filter=date_filter
                     )
-                return self._handle_find_pesticide_in_sample(entities.pesticide, entities.samples)
+                return self._handle_find_pesticide_in_sample(entities.pesticide, entities.samples, date_filter=date_filter)
             
             if intent == Intent.FIND_PESTICIDE_ALL and entities.pesticide:
-                return self._handle_find_pesticide_all(entities.pesticide)
+                return self._handle_find_pesticide_all(entities.pesticide, date_filter=date_filter)
             
             if intent == Intent.LIST_PESTICIDES_IN_SAMPLE and entities.samples:
-                return self._handle_list_pesticides(entities.samples)
+                return self._handle_list_pesticides(entities.samples, date_filter=date_filter)
             
             if intent == Intent.PESTICIDE_STATISTICS and entities.pesticide:
                 return self._handle_pesticide_stats(
-                    entities.pesticide, entities.samples, entities.stat_types
+                    entities.pesticide, entities.samples, entities.stat_types, date_filter=date_filter
                 )
             
             # ── Sample counting ──
             if intent == Intent.COUNT_SAMPLES_LIMIT and entities.samples:
                 return self._handle_count_samples_limit(
-                    entities.samples, entities.neighborhoods, entities.is_above_limit
+                    entities.samples, entities.neighborhoods, entities.is_above_limit, date_filter=date_filter
                 )
             
             if intent == Intent.COUNT_SAMPLES_SIMPLE and entities.samples:
-                return self._handle_simple_sample_count(entities.samples, entities.neighborhoods)
+                return self._handle_simple_sample_count(entities.samples, entities.neighborhoods, date_filter=date_filter)
             
             if intent == Intent.UNIQUE_COUNT and entities.samples:
-                return self._handle_unique_samples_count(entities.samples, entities.neighborhoods)
+                return self._handle_unique_samples_count(entities.samples, entities.neighborhoods, date_filter=date_filter)
             
             # ── Other ──
             if intent == Intent.COMPREHENSIVE_ANALYSIS and entities.samples:
-                return self._handle_comprehensive_analysis(entities.samples)
+                return self._handle_comprehensive_analysis(entities.samples, date_filter=date_filter)
             
             if intent == Intent.FACILITY_SEARCH:
                 return self._handle_facility_search(query)
@@ -738,10 +854,9 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             logging.warning(f"Intent dispatch error for {intent}: {ex}")
         
         return None  # UNKNOWN → falls through to patterns/LLM
-    
     def _extract_context(self, query: str) -> dict:
         """
-        Normalize the query and detect all entities (samples, neighborhoods, pesticide).
+        Normalize the query and detect all entities (samples, neighborhoods, pesticide, period).
 
         Strips category sentinels (__cat__<key>) from detected_samples so that
         standard handlers always receive concrete sample names. The sentinel is
@@ -756,6 +871,8 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         detected_samples_raw = self._detect_sample_types(query)
         detected_neighborhoods = self._detect_neighborhoods(query)
         detected_pesticide = self._detect_pesticide(query)
+        detected_period = self._detect_time_period(query)
+        detected_period_label = self._period_label(query) if detected_period else None
 
         category_key = None
         detected_samples = []
@@ -773,6 +890,8 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             'detected_samples_raw': detected_samples_raw,
             'detected_neighborhoods': detected_neighborhoods,
             'detected_pesticide': detected_pesticide,
+            'detected_period': detected_period,
+            'detected_period_label': detected_period_label,
             'category_key': category_key,
         }
 
@@ -781,9 +900,15 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         Process a query and return (response_text, DataFrame | None).
 
         Three-tier routing, in priority order:
-          1. Semantic pattern recognition  — embedding-based, confidence ≥ 0.75
-          2. Intent-based routing          — entity extraction + intent classifier
-          3. Keyword pattern cascade       — _dispatch_keyword_patterns()
+        1. Semantic pattern recognition  — embedding-based, confidence ≥ 0.75
+        2. Intent-based routing          — entity extraction + intent classifier
+        3. Keyword pattern cascade       — _dispatch_keyword_patterns()
+
+        A time-period filter (detected_period) is extracted once in
+        _extract_context() and threaded into every tier / handler that
+        supports it. A human-readable date-range label (detected_period_label)
+        is appended to the final response text exactly once, regardless of
+        which tier produced the answer.
         """
         ctx = self._extract_context(query)
         query_normalized = ctx['query_normalized']
@@ -791,58 +916,75 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         detected_samples      = ctx['detected_samples']
         detected_neighborhoods = ctx['detected_neighborhoods']
         detected_pesticide    = ctx['detected_pesticide']
+        detected_period       = ctx['detected_period']
+        period_label          = ctx['detected_period_label']
+
+        result: Optional[Tuple[str, Optional[pd.DataFrame]]] = None
 
         # ── Tier 0: Explicit compliance-status override ──────────────────────
-        # "غير مطابقة" / "مطابقة" + neighborhood(s) must route straight to the
-        # compliance handler — bypass semantic/intent tiers, which tend to
-        # misclassify these as generic "comprehensive neighborhood" queries.
-        non_compliant_ar_kws = ['غير مطابقة', 'الغير مطابقة', 'غير المطابقة']
-        compliant_ar_kws = ['مطابقة']
+        # Official lab verdict (sample_result) keywords — "غير مطابقة" / "راسبة" /
+        # "مطابقة" etc. — must route straight to the compliance-table handler and
+        # bypass semantic/intent tiers, which tend to misclassify these as
+        # generic "above/below limit" (is_above_limit) queries. is_above_limit is
+        # a *technical* per-pesticide reading vs its MRL; sample_result is the
+        # chemist's *official* pass/fail decision — they are not the same thing.
+        non_compliant_ar_kws = [
+            'غير مطابقة', 'الغير مطابقة', 'غير المطابقة',
+            'راسبة', 'الراسبة', 'راسب', 'رواسب', 'فاشلة', 'فشلت', 'مرفوضة',
+        ]
+        compliant_ar_kws = ['مطابقة', 'ناجحة', 'مقبولة']
         is_non_compliant_ar = any(kw in query for kw in non_compliant_ar_kws)
         is_compliant_ar = (not is_non_compliant_ar) and any(kw in query for kw in compliant_ar_kws)
 
-        if (is_non_compliant_ar or is_compliant_ar) and detected_neighborhoods:
-            return self._handle_count_samples_compliance(
-                detected_samples, detected_neighborhoods, is_non_compliant_ar
+        if is_non_compliant_ar or is_compliant_ar:
+            result = self._handle_count_samples_compliance_table(
+                detected_samples, detected_neighborhoods, is_non_compliant_ar,
+                date_filter=detected_period,
             )
 
         # ── Tier 1: Semantic pattern recognition ──────────────────────────────
-        if self.semantic_recognizer:
+        if result is None and self.semantic_recognizer:
             semantic_result = self.semantic_recognizer.recognize(query)
             if semantic_result and semantic_result['confidence'] >= 0.75:
                 pattern_type = semantic_result['pattern_type']
                 logging.debug(f"Semantic match: {pattern_type} ({semantic_result['confidence']:.2f})")
                 result = self._route_by_semantic_pattern(
                     pattern_type, query, query_normalized, query_lower,
-                    detected_samples, detected_neighborhoods, detected_pesticide
+                    detected_samples, detected_neighborhoods, detected_pesticide,
+                    date_filter=detected_period,
                 )
-                if result is not None:
-                    return result
 
         # ── Tier 2: Intent-based routing ──────────────────────────────────────
-        if self.router:
+        if result is None and self.router:
             intent, entities = self.router.analyze(query)
             if intent != Intent.UNKNOWN:
                 logging.info(
                     f"🎯 Intent: {intent.name} | samples={entities.samples} "
                     f"neighborhoods={entities.neighborhoods} category={entities.category} "
-                    f"pesticide={entities.pesticide}"
+                    f"pesticide={entities.pesticide} period={detected_period}"
                 )
-                result = self._dispatch_by_intent(intent, entities)
-                if result is not None:
-                    return result
+                result = self._dispatch_by_intent(intent, entities, date_filter=detected_period)
 
         # ── Tier 3: Keyword pattern cascade ───────────────────────────────────
-        try:
-            result = self._dispatch_keyword_patterns(ctx)
-        except RuntimeError as db_err:
-            # DB missing or corrupt — show a clear message instead of a stack trace
-            logging.error(f"DB connection error during query: {db_err}")
-            return str(db_err), None
-        if result is not None:
-            return result
+        if result is None:
+            try:
+                result = self._dispatch_keyword_patterns(ctx)
+            except RuntimeError as db_err:
+                # DB missing or corrupt — show a clear message instead of a stack trace
+                logging.error(f"DB connection error during query: {db_err}")
+                return str(db_err), None
 
-        return self._handle_unknown_query(query), None
+        # ── Fallback: nothing matched ───────────────────────────────────────────
+        if result is None:
+            result = (self._handle_unknown_query(query), None)
+
+        response_text, df = result
+
+        # ── Append date-range label once, regardless of which tier answered ───
+        if period_label:
+            response_text += f"\n\n📅 **الفترة الزمنية:** {period_label}"
+
+        return response_text, df
 
     def _dispatch_keyword_patterns(
         self, ctx: dict
@@ -861,6 +1003,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         detected_samples_raw  = ctx['detected_samples_raw']
         detected_neighborhoods = ctx['detected_neighborhoods']
         detected_pesticide    = ctx['detected_pesticide']
+        detected_period       = ctx['detected_period']
         _detected_category_key = ctx['category_key']
 
         # Pattern 0: Comprehensive neighborhood + sample type analysis
@@ -877,7 +1020,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         )
         
         if is_comprehensive_hood_query:
-            return self._handle_comprehensive_neighborhood(query, detected_samples, detected_neighborhoods)
+            return self._handle_comprehensive_neighborhood(query, detected_samples, detected_neighborhoods, date_filter=detected_period)
         
         # Pattern 0B: Category/types in neighborhood (WITHOUT limit keywords)
         # "what are the types of spices in al_iskan"
@@ -889,7 +1032,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         has_type_question = any(kw in query_lower for kw in category_keywords)
         
         if (has_category or (has_type_question and detected_samples)) and detected_neighborhoods:
-            return self._handle_comprehensive_neighborhood(query, detected_samples, detected_neighborhoods)
+            return self._handle_comprehensive_neighborhood(query, detected_samples, detected_neighborhoods, date_filter=detected_period)
         
         # Continue with other patterns if not comprehensive
         # Pattern 1: Samples with N pesticides (supports multiple counts)
@@ -911,11 +1054,11 @@ class CoreQueryEngine(AdvancedHandlersMixin):
                 if (is_multiple or has_multiple_with_and) and len(all_numbers) > 1:
                     pesticide_counts = [int(n) for n in all_numbers if int(n) <= 50]
                     if pesticide_counts:
-                        return self._handle_multiple_n_pesticides(pesticide_counts, detected_samples)
+                        return self._handle_multiple_n_pesticides(pesticide_counts, detected_samples, date_filter=detected_period)
                 else:
                     n_pesticides = int(all_numbers[-1])
                     if 0 <= n_pesticides <= 50:
-                        return self._handle_n_pesticides(n_pesticides, detected_samples)
+                        return self._handle_n_pesticides(n_pesticides, detected_samples, date_filter=detected_period)
         
         # Pattern 1B: Violations threshold — "find vegetables with more than 10 violations"
         # Matches: category/sample + (more than | over | above) + number + violation
@@ -933,7 +1076,8 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         if has_threshold_kw and has_violation_kw and threshold_numbers:
             threshold = int(threshold_numbers[0])
             return self._handle_violations_threshold(
-                detected_samples, detected_neighborhoods, threshold, _detected_category_key
+                detected_samples, detected_neighborhoods, threshold, _detected_category_key,
+                date_filter=detected_period,
             )
 
 
@@ -992,14 +1136,15 @@ class CoreQueryEngine(AdvancedHandlersMixin):
                      limit_filter = "AND sample_result = 'Compliant'"
                      limit_desc = "Compliant"
                  return self._handle_sample_pesticide_limit(detected_samples, detected_pesticide, is_above_limit, 
-                                                            limit_filter=limit_filter, limit_desc=limit_desc)
+                                                            limit_filter=limit_filter, limit_desc=limit_desc,
+                                                            date_filter=detected_period)
              elif explicit_both:
-                 return self._handle_sample_pesticide_limit(detected_samples, detected_pesticide, is_above_limit, both=True)
+                 return self._handle_sample_pesticide_limit(detected_samples, detected_pesticide, is_above_limit, both=True, date_filter=detected_period)
              else:
-                 return self._handle_sample_pesticide_limit(detected_samples, detected_pesticide, is_above_limit)
+                 return self._handle_sample_pesticide_limit(detected_samples, detected_pesticide, is_above_limit, date_filter=detected_period)
 
         if is_count_query and detected_samples and (is_above_limit or is_below_limit):
-            return self._handle_count_samples_limit(detected_samples, detected_neighborhoods, is_above_limit)
+            return self._handle_count_samples_limit(detected_samples, detected_neighborhoods, is_above_limit, date_filter=detected_period)
         
         # Pattern 2B: Count compliant/non-compliant samples (sample_result)
         # "how many non-compliant cucumber samples"
@@ -1015,36 +1160,36 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             # Check it's not a limit query
             if not is_above_limit and not is_below_limit:
                 return self._handle_count_samples_compliance(detected_samples, detected_neighborhoods, 
-                                                              is_non_compliant_query)
+                                                              is_non_compliant_query, date_filter=detected_period)
         
         # Pattern 3: List pesticides in sample type
         # "what are the pesticides in tomatoes"
         pesticide_list_patterns = ['pesticides found in', 'pesticides detected in', 'what pesticides in', 'list pesticides in']
         if any(p in query_lower for p in pesticide_list_patterns) and detected_samples:
-            return self._handle_list_pesticides(detected_samples)
+            return self._handle_list_pesticides(detected_samples, date_filter=detected_period)
         
         # Pattern 4: Pesticides in neighborhoods
         # "what pesticides are in al iskan neighborhood"
         if detected_neighborhoods and ('pesticide' in query_lower or 'pesticides' in query_lower):
             show_separately = any(phrase in query_lower for phrase in ['individually', 'separately', 'for each'])
-            return self._handle_neighborhood_pesticides(detected_neighborhoods, show_separately)
+            return self._handle_neighborhood_pesticides(detected_neighborhoods, show_separately, date_filter=detected_period)
         
         # Pattern 5: Find samples containing pesticide
         # "tomato samples containing bifenthrin"
         if detected_pesticide and detected_samples:
-            return self._handle_find_pesticide_in_sample(detected_pesticide, detected_samples)
+            return self._handle_find_pesticide_in_sample(detected_pesticide, detected_samples, date_filter=detected_period)
         
         # Pattern 6: Neighborhood ranking
         # "ranking of neighborhoods by violations"
         if any(kw in query_lower for kw in ['rank', 'ranking', 'worst', 'most violations']) and \
            any(kw in query_lower for kw in ['neighborhood', 'neighborhoods']):
-            return self._handle_neighborhood_ranking()
+            return self._handle_neighborhood_ranking(date_filter=detected_period)
         
         # Pattern 7: Comprehensive analysis
         # "comprehensive analysis of tomatoes"
         comprehensive_keywords = ['comprehensive analysis', 'comprehensive report', 'statistics for', 'summary of']
         if any(kw in query_lower for kw in comprehensive_keywords) and detected_samples:
-            return self._handle_comprehensive_analysis(detected_samples)
+            return self._handle_comprehensive_analysis(detected_samples, date_filter=detected_period)
         
         # Pattern 8: Pesticide statistics (max, min, range, median, average)
         # "what is the median concentration of imidacloprid in tomatoes"
@@ -1054,7 +1199,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
                 stats_keywords_found.append(stat_type)
         
         if stats_keywords_found and detected_pesticide:
-            return self._handle_pesticide_stats(detected_pesticide, detected_samples, stats_keywords_found)
+            return self._handle_pesticide_stats(detected_pesticide, detected_samples, stats_keywords_found, date_filter=detected_period)
         
         # Pattern HRI: Health Risk Index
         hri_kws_en = ['health risk index', 'health risk', 'hri', 'risk index']
@@ -1182,18 +1327,18 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         if detected_pesticide and not detected_samples:
             # Check if it's asking about samples with this pesticide
             if any(kw in query_lower for kw in ['samples', 'count', 'how many']):
-                return self._handle_samples_with_pesticide(detected_pesticide)
+                return self._handle_samples_with_pesticide(detected_pesticide, date_filter=detected_period)
         
         # Pattern 11: Unique sample count
         # "how many unique cucumber samples"
         if detected_samples and any(kw in query_lower for kw in ['unique', 'distinct', 'sample code']):
-            return self._handle_unique_samples_count(detected_samples, detected_neighborhoods)
+            return self._handle_unique_samples_count(detected_samples, detected_neighborhoods, date_filter=detected_period)
         
         # Pattern 12: Just search for pesticide (no sample filter)
         # "Find fipronil"
         search_keywords = ['find', 'search', 'locate']
         if detected_pesticide and any(kw in query_lower for kw in search_keywords):
-            return self._handle_find_pesticide_all(detected_pesticide)
+            return self._handle_find_pesticide_all(detected_pesticide, date_filter=detected_period)
         
         # Pattern 14: Simple sample count (NO CONDITIONS)
         # "how many tomato samples"
@@ -1201,7 +1346,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         count_keywords = ['count', 'how many', 'samples']
         if detected_samples and any(kw in query_lower for kw in count_keywords):
             # Only trigger if NOT a limit/compliance query (those are handled above)
-            return self._handle_simple_sample_count(detected_samples, detected_neighborhoods)
+            return self._handle_simple_sample_count(detected_samples, detected_neighborhoods, date_filter=detected_period)
         
         # Pattern 14: LLM Fallback for unknown queries
         # If we have LLM configured, try to generate SQL
@@ -1217,15 +1362,17 @@ class CoreQueryEngine(AdvancedHandlersMixin):
     
     # Handlers
     
-    def _handle_n_pesticides(self, n: int, samples: List[str]) -> Tuple[str, pd.DataFrame]:
+    def _handle_n_pesticides(self, n: int, samples: List[str],
+                              date_filter: Optional[str] = None) -> Tuple[str, pd.DataFrame]:
         """Samples with exactly N pesticides."""
         if n == 0:
-            return self._handle_multiple_n_pesticides([0], samples)
+            return self._handle_multiple_n_pesticides([0], samples, date_filter=date_filter)
         con = self._get_connection()
         
         sample_filter = ""
         if samples:
             sample_filter = f"AND {self._build_sample_filter(samples)}"
+        date_clause = date_filter or ""
         
         sql = f"""
         SELECT 
@@ -1235,6 +1382,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         FROM chemistry_tidy
         WHERE is_detected = 1 AND pesticide_name NOT IN ('NO DETECTION', 'NO DATA')
         {sample_filter}
+        {date_clause}
         GROUP BY "كود العينة", "اسم العينة"
         HAVING COUNT(*) = {n}
         ORDER BY "كود العينة" DESC
@@ -1262,7 +1410,9 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             response = f"⚠️ No {sample_display} samples found with {n} pesticide(s)"
         
         return response, df
-    def _handle_multiple_n_pesticides(self, counts: List[int], samples: List[str]) -> Tuple[str, pd.DataFrame]:
+
+    def _handle_multiple_n_pesticides(self, counts: List[int], samples: List[str],
+                                       date_filter: Optional[str] = None) -> Tuple[str, pd.DataFrame]:
         """
         عينات بأعداد مختلفة من المبيدات (يشمل 0 = خالية)
         يدعم: "العينات الخالية من المبيدات و التي تحتوي علي مبيد واحد و ثلاث مبيدات"
@@ -1272,6 +1422,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         sample_filter = ""
         if samples:
             sample_filter = f"AND {self._build_sample_filter(samples)}"
+        date_clause = date_filter or ""
     
         has_zero = 0 in counts
         non_zero_counts = [c for c in counts if c > 0]
@@ -1289,6 +1440,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
                 WHERE is_detected = 1
                 AND pesticide_name NOT IN ('NO DETECTION', 'NO DATA')
                 {sample_filter}
+                {date_clause}
             )
             SELECT 
                 "كود العينة" as sample_code,
@@ -1297,6 +1449,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             FROM chemistry_tidy
             WHERE "كود العينة" NOT IN (SELECT "كود العينة" FROM detected_samples)
             {sample_filter}
+            {date_clause}
             GROUP BY "كود العينة", "اسم العينة"
             ORDER BY "كود العينة" DESC
             """
@@ -1330,6 +1483,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             WHERE is_detected = 1 
             AND pesticide_name NOT IN ('NO DETECTION', 'NO DATA')
             {sample_filter}
+            {date_clause}
             GROUP BY "كود العينة", "اسم العينة"
             HAVING COUNT(*) = {n}
             ORDER BY "كود العينة" DESC
@@ -1386,7 +1540,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         return response, combined_df
     
     def _handle_count_samples_limit(self, samples: List[str], neighborhoods: List[str], 
-                                     is_above: bool) -> Tuple[str, pd.DataFrame]:
+                                     is_above: bool, date_filter: Optional[str] = None) -> Tuple[str, pd.DataFrame]:
         """عد العينات فوق/تحت الحد - بناءً على كود العينة الفريد"""
         con = self._get_connection()
         
@@ -1410,6 +1564,8 @@ class CoreQueryEngine(AdvancedHandlersMixin):
                     hood_conditions.append(f"\"الحى\" LIKE '%{v}%'")
             neighborhood_filter = f"AND ({' OR '.join(hood_conditions)})"
         
+        date_clause = date_filter or ""
+        
         # Use CTE to correctly count UNIQUE SAMPLES based on sample code
         # A sample is "above limit" if it has AT LEAST ONE pesticide above limit
         sql = f"""
@@ -1422,6 +1578,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             WHERE is_detected = 1
             {sample_filter}
             {neighborhood_filter}
+            {date_clause}
             GROUP BY "كود العينة", "اسم العينة"
         )
         SELECT 
@@ -1457,7 +1614,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         return response, df
     
     def _handle_count_samples_compliance(self, samples: List[str], neighborhoods: List[str], 
-                                          is_non_compliant: bool) -> Tuple[str, pd.DataFrame]:
+                                          is_non_compliant: bool, date_filter: Optional[str] = None) -> Tuple[str, pd.DataFrame]:
         """عد العينات المطابقة/غير المطابقة - بناءً على عمود نتيجة العينة (sample_result)"""
         con = self._get_connection()
         
@@ -1481,6 +1638,8 @@ class CoreQueryEngine(AdvancedHandlersMixin):
                     hood_conditions.append(f"\"الحى\" LIKE '%{v}%'")
             neighborhood_filter = f"AND ({' OR '.join(hood_conditions)})"
         
+        date_clause = date_filter or ""
+        
         # Query using sample_result column
         sql = f"""
         SELECT 
@@ -1492,6 +1651,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         WHERE 1=1
         {sample_filter}
         {neighborhood_filter}
+        {date_clause}
         GROUP BY "الحى", "اسم العينة", sample_result
         ORDER BY "الحى", sample_count DESC
         """
@@ -1531,12 +1691,87 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             response = f"⚠️ No samples found for **{type_display}**"
         
         return response, df
+
+    def _handle_count_samples_compliance_table(self, samples: List[str], neighborhoods: List[str],
+                                                 is_non_compliant: bool,
+                                                 date_filter: Optional[str] = None) -> Tuple[str, pd.DataFrame]:
+        """
+        Manager-style compliance summary based on sample_result (official lab
+        verdict), NOT is_above_limit (technical per-pesticide exceedance).
+
+        Returns one row per sample_type with sample_count / non_compliant /
+        compliant columns — the shape managers ask for, e.g.:
+
+            sample_type     sample_count  above_limit  below_limit
+            Tomato          172           57           115
+            Cherry Tomato   25            12           13
+            Cluster Tomato  1             0            1
+
+        Note: despite the historical "above_limit"/"below_limit" column
+        naming convention used elsewhere in this file, THIS handler counts
+        against sample_result, so its output columns are named
+        non_compliant / compliant to avoid confusion with the technical
+        is_above_limit metric used by _handle_count_samples_limit.
+        """
+        con = self._get_connection()
+
+        sample_filter = f"AND {self._build_sample_filter(samples)}" if samples else ""
+
+        neighborhood_filter = ""
+        if neighborhoods:
+            hood_conditions = []
+            for n in neighborhoods:
+                variants = {n, n.replace('ا', 'إ'), n.replace('ا', 'أ'),
+                            n.replace('إ', 'ا'), n.replace('أ', 'ا')}
+                hood_conditions += [f"\"الحى\" LIKE '%{v}%'" for v in variants]
+            neighborhood_filter = f"AND ({' OR '.join(hood_conditions)})"
+
+        date_clause = date_filter or ""
+
+        sql = f"""
+        SELECT
+            "اسم العينة" AS sample_type,
+            COUNT(DISTINCT "كود العينة") AS sample_count,
+            COUNT(DISTINCT CASE WHEN sample_result = 'Non-Compliant' THEN "كود العينة" END) AS non_compliant,
+            COUNT(DISTINCT CASE WHEN sample_result = 'Compliant' THEN "كود العينة" END) AS compliant
+        FROM chemistry_tidy
+        WHERE 1=1
+        {sample_filter}
+        {neighborhood_filter}
+        {date_clause}
+        GROUP BY "اسم العينة"
+        ORDER BY sample_count DESC
+        """
+        df = con.execute(sql).df()
+        con.close()
+
+        type_display = " + ".join(samples) if samples else "All types"
+        if neighborhoods:
+            type_display += f" in {' + '.join(neighborhoods)}"
+        if date_filter:
+            type_display += " (filtered by period)"
+
+        if df.empty:
+            return f"⚠️ No samples found for **{type_display}**", df
+
+        status_text = 'Non-Compliant' if is_non_compliant else 'Compliant'
+        total_count = int(df['sample_count'].sum())
+        total_target = int(df['non_compliant'].sum() if is_non_compliant else df['compliant'].sum())
+
+        response = f"📊 **{status_text} samples (official sample_result) — {type_display}**\n\n"
+        response += f"✅ Total unique samples: **{total_count}**\n"
+        response += f"📌 **{status_text}: {total_target}**\n\n"
+        response += df.to_markdown(index=False)
+
+        return response, df
     
-    def _handle_list_pesticides(self, samples: List[str]) -> Tuple[str, pd.DataFrame]:
+    def _handle_list_pesticides(self, samples: List[str],
+                                 date_filter: Optional[str] = None) -> Tuple[str, pd.DataFrame]:
         """List pesticides found in a sample type."""
         con = self._get_connection()
         
         sample_filter = self._build_sample_filter(samples)
+        date_clause = date_filter or ""
         
         sql = f"""
         SELECT 
@@ -1549,6 +1784,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         WHERE is_detected = 1
         AND pesticide_name NOT IN ('NO DETECTION', 'NO DATA')
         AND {sample_filter}
+        {date_clause}
         GROUP BY pesticide_name
         ORDER BY detections DESC
         LIMIT 50
@@ -1576,9 +1812,11 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         return response, df
     
     def _handle_neighborhood_pesticides(self, neighborhoods: List[str], 
-                                         show_separately: bool) -> Tuple[str, pd.DataFrame]:
+                                         show_separately: bool,
+                                         date_filter: Optional[str] = None) -> Tuple[str, pd.DataFrame]:
         """Pesticides detected in neighborhoods."""
         con = self._get_connection()
+        date_clause = date_filter or ""
         
         all_dfs = []
         all_responses = []
@@ -1595,6 +1833,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
                 WHERE is_detected = 1
                 AND pesticide_name NOT IN ('NO DETECTION', 'NO DATA')
                 AND "الحى" LIKE '%{n}%'
+                {date_clause}
                 GROUP BY pesticide_name
                 ORDER BY detections DESC
                 LIMIT 20
@@ -1628,6 +1867,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             WHERE is_detected = 1 
             AND pesticide_name NOT IN ('NO DETECTION', 'NO DATA')
             AND {neighborhood_filter}
+            {date_clause}
             GROUP BY "الحى", pesticide_name
             ORDER BY neighborhood, detections DESC
             LIMIT 50
@@ -1647,11 +1887,13 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         return response, combined_df
     
     def _handle_find_pesticide_in_sample(self, pesticide: str, 
-                                          samples: List[str]) -> Tuple[str, pd.DataFrame]:
+                                          samples: List[str],
+                                          date_filter: Optional[str] = None) -> Tuple[str, pd.DataFrame]:
         """Find a specific pesticide in samples — returns unique sample-level rows."""
         con = self._get_connection()
         
         sample_filter = self._build_sample_filter(samples)
+        date_clause = date_filter or ""
         
         sql = f"""
         SELECT 
@@ -1666,6 +1908,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         WHERE is_detected = 1 
         AND ({get_pesticide_sql_filter(pesticide)})
         AND {sample_filter}
+        {date_clause}
         ORDER BY "كود العينة" DESC
         LIMIT 100
         """
@@ -1689,11 +1932,12 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         
         return response, df
     
-    def _handle_neighborhood_ranking(self) -> Tuple[str, pd.DataFrame]:
+    def _handle_neighborhood_ranking(self, date_filter: Optional[str] = None) -> Tuple[str, pd.DataFrame]:
         """Rank neighborhoods by number of violations."""
         con = self._get_connection()
+        date_clause = date_filter or ""
         
-        sql = """
+        sql = f"""
         SELECT 
             "الحى"                             AS neighborhood,
             COUNT(DISTINCT "كود العينة")        AS total_samples,
@@ -1702,6 +1946,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
                   NULLIF(COUNT(DISTINCT "كود العينة"), 0), 2) AS violation_rate_pct
         FROM chemistry_tidy
         WHERE "الحى" IS NOT NULL AND "الحى" != ''
+        {date_clause}
         GROUP BY "الحى"
         ORDER BY violations DESC
         LIMIT 20
@@ -1719,12 +1964,14 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         
         return response, df
     
-    def _handle_comprehensive_analysis(self, samples: List[str]) -> Tuple[str, pd.DataFrame]:
+    def _handle_comprehensive_analysis(self, samples: List[str],
+                                        date_filter: Optional[str] = None) -> Tuple[str, pd.DataFrame]:
         """Comprehensive analysis of a sample type."""
         con = self._get_connection()
         
         sample_filter = self._build_sample_filter(samples)
         type_display = " + ".join(samples)
+        date_clause = date_filter or ""
         
         distribution_sql = f"""
         WITH sample_pesticide_counts AS (
@@ -1734,6 +1981,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
                 SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) AS failing_count
             FROM chemistry_tidy
             WHERE {sample_filter}
+            {date_clause}
             GROUP BY "كود العينة"
         )
         SELECT 
@@ -1761,6 +2009,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         WHERE {sample_filter}
         AND is_detected = 1
         AND pesticide_name NOT IN ('NO DETECTION', 'NO DATA')
+        {date_clause}
         GROUP BY pesticide_name
         ORDER BY detections DESC
         """
@@ -1794,13 +2043,15 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         return response, distribution_df
     
     def _handle_pesticide_stats(self, pesticide: str, samples: List[str], 
-                                 stats_requested: List[str]) -> Tuple[str, pd.DataFrame]:
+                                 stats_requested: List[str],
+                                 date_filter: Optional[str] = None) -> Tuple[str, pd.DataFrame]:
         """Statistics for a specific pesticide."""
         con = self._get_connection()
         
         sample_filter = ""
         if samples:
             sample_filter = f"AND {self._build_sample_filter(samples)}"
+        date_clause = date_filter or ""
         
         sql = f"""
         SELECT 
@@ -1817,6 +2068,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         WHERE is_detected = 1
         AND ({get_pesticide_sql_filter(pesticide)})
         {sample_filter}
+        {date_clause}
         GROUP BY pesticide_name
         """
         
@@ -1922,9 +2174,11 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         
         return response, df
     
-    def _handle_samples_with_pesticide(self, pesticide: str) -> Tuple[str, pd.DataFrame]:
+    def _handle_samples_with_pesticide(self, pesticide: str,
+                                        date_filter: Optional[str] = None) -> Tuple[str, pd.DataFrame]:
         """All sample types containing a specific pesticide."""
         con = self._get_connection()
+        date_clause = date_filter or ""
         
         sql = f"""
         SELECT 
@@ -1937,6 +2191,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         FROM chemistry_tidy
         WHERE is_detected = 1
         AND ({get_pesticide_sql_filter(pesticide)})
+        {date_clause}
         GROUP BY "اسم العينة"
         ORDER BY detections DESC
         LIMIT 50
@@ -1962,7 +2217,8 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         return response, df
     
     def _handle_unique_samples_count(self, samples: List[str], 
-                                      neighborhoods: List[str]) -> Tuple[str, pd.DataFrame]:
+                                      neighborhoods: List[str],
+                                      date_filter: Optional[str] = None) -> Tuple[str, pd.DataFrame]:
         """Count unique sample codes."""
         con = self._get_connection()
         
@@ -1974,6 +2230,8 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             hood_conditions = [f"\"الحى\" LIKE '%{n}%'" for n in neighborhoods]
             neighborhood_filter = f"AND ({' OR '.join(hood_conditions)})"
         
+        date_clause = date_filter or ""
+        
         sql = f"""
         SELECT 
             "اسم العينة" AS sample_type,
@@ -1983,6 +2241,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         FROM chemistry_tidy
         WHERE {sample_filter}
         {neighborhood_filter}
+        {date_clause}
         GROUP BY "اسم العينة"
         ORDER BY unique_samples DESC
         """
@@ -2003,9 +2262,11 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         
         return response, df
     
-    def _handle_find_pesticide_all(self, pesticide: str) -> Tuple[str, pd.DataFrame]:
+    def _handle_find_pesticide_all(self, pesticide: str,
+                                    date_filter: Optional[str] = None) -> Tuple[str, pd.DataFrame]:
         """Search for a pesticide across all sample types."""
         con = self._get_connection()
+        date_clause = date_filter or ""
         
         sql = f"""
         SELECT 
@@ -2020,6 +2281,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         FROM chemistry_tidy
         WHERE is_detected = 1
         AND ({get_pesticide_sql_filter(pesticide)})
+        {date_clause}
         ORDER BY concentration DESC
         LIMIT 100
         """
@@ -2041,7 +2303,8 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         return response, df
     
     def _handle_sample_pesticide_limit(self, samples: List[str], pesticide: str, is_above: bool, 
-                                        both: bool = False, limit_filter: str = None, limit_desc: str = None) -> Tuple[str, pd.DataFrame]:
+                                        both: bool = False, limit_filter: str = None, limit_desc: str = None,
+                                        date_filter: Optional[str] = None) -> Tuple[str, pd.DataFrame]:
         """
         عينات تحتوي على مبيد X فوق/تحت الحد أو غير مطابقة
         "عينات الطماطم التي تحتوي على مبيد البابروفيزن فوق الحد"
@@ -2051,6 +2314,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         
         # Build filters — DB stores English sample names
         sample_filter = self._build_sample_filter(samples)
+        date_clause = date_filter or ""
         
         # Clean pesticide name (remove 'AL' prefix if present)
         if pesticide.startswith('ال') and len(pesticide) > 4:
@@ -2091,6 +2355,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         AND ({get_pesticide_sql_filter(pesticide)})
         AND is_detected = 1
         {limit_filter}
+        {date_clause}
         ORDER BY is_above_limit DESC, concentration DESC
         LIMIT 50
         """
@@ -2113,6 +2378,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             AND ({get_pesticide_sql_filter(pesticide)})
             AND is_detected = 1
             {limit_filter}
+            {date_clause}
             ORDER BY is_above_limit DESC, concentration DESC
             LIMIT 50
             """
@@ -2142,7 +2408,8 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         return response, df
     
     def _handle_simple_sample_count(self, samples: List[str], 
-                                     neighborhoods: List[str]) -> Tuple[str, pd.DataFrame]:
+                                     neighborhoods: List[str],
+                                     date_filter: Optional[str] = None) -> Tuple[str, pd.DataFrame]:
         """
         عد العينات الفريدة (بدون شروط)
         Simple sample count without limit/compliance conditions
@@ -2171,6 +2438,8 @@ class CoreQueryEngine(AdvancedHandlersMixin):
                     hood_conditions.append(f"\"الحى\" LIKE '%{v}%'")
             neighborhood_filter = f"AND ({' OR '.join(hood_conditions)})"
         
+        date_clause = date_filter or ""
+        
         # Count unique samples by sample code
         sql = f"""
         WITH sample_info AS (
@@ -2182,6 +2451,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             FROM chemistry_tidy
             WHERE {sample_filter}
             {neighborhood_filter}
+            {date_clause}
             GROUP BY "كود العينة", "اسم العينة"
         )
         SELECT 
@@ -2294,6 +2564,7 @@ Key columns:
         neighborhoods: List[str],
         threshold: int,
         category_key: Optional[str] = None,
+        date_filter: Optional[str] = None,
     ) -> Tuple[str, Optional[pd.DataFrame]]:
         """
         Find sample types with MORE THAN `threshold` violations (is_above_limit records).
@@ -2304,6 +2575,7 @@ Key columns:
             threshold:     Minimum violation count (exclusive: > threshold).
             category_key:  Generic category ('vegetable', 'fruit', 'spice', 'nut', …).
                            When set, sample types are resolved from the DB.
+            date_filter:   Optional SQL date filter fragment from _detect_time_period().
         """
         con = self._get_connection()
 
@@ -2366,6 +2638,8 @@ Key columns:
                     hood_parts.append(f"\"الحى\" LIKE '%{v}%'")
             neighborhood_filter = f"AND ({' OR '.join(hood_parts)})"
 
+        date_clause = date_filter or ""
+
         # ── Main SQL: violation count per sample name ──
         sql = f"""
         SELECT
@@ -2381,6 +2655,7 @@ Key columns:
             AND pesticide_name NOT IN ('NO DETECTION', 'NO DATA')
             {sample_filter}
             {neighborhood_filter}
+            {date_clause}
         GROUP BY "اسم العينة"
         HAVING SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) > {threshold}
         ORDER BY violations DESC
@@ -2485,7 +2760,10 @@ Key columns:
         Returns:
             (response_text, dataframe_or_None, generated_sql_or_None)
 
-        The third element lets the caller display a "View SQL" expander.
+        The third element lets the caller display a "View SQL" expander AND
+        double as a trust-level signal: Tier 1 (pattern/template matched)
+        never populates generated_sql, only Tier 2 (LLM) does. Use
+        get_trust_badge() below to render that distinction in the UI.
         """
         # ── Tier 1: existing pattern / intent routing ──
         response_text, df = self.process(query)
@@ -2583,13 +2861,10 @@ Key columns:
                 )
 
             return response_text, df, generated_sql
-            
-            
 
         except Exception as exc:
             logging.error(f"LLM fallback failed: {exc}")
             return response_text, None, generated_sql
-        
 
     def _handle_unknown_query(self, query: str) -> str:
         """Handle unknown queries"""
@@ -2605,14 +2880,16 @@ Key columns:
         response += "• What is the maximum concentration of imidacloprid?\n"
         response += "• Search for fipronil in beans\n"
         response += "• Samples containing 6 pesticides\n"
+        response += "• How many non-compliant/failed tomato samples last 3 months?\n"
         return response
-def get_trust_badge(generated_sql: str | None) -> str:
-                """
-                Returns a trust-level badge based on which tier answered the query.
-                Tier 0/1 (template/pattern matched) never populate generated_sql.
-                Tier 2 (LLM SQL generation) always does.
-                """
-                if generated_sql is None:
-                    return "✅ Verified query"
-                return "🤖 AI-generated (verify results)"
-            
+
+
+def get_trust_badge(generated_sql: Optional[str]) -> str:
+    """
+    Returns a trust-level badge based on which tier answered the query.
+    Tier 1 (template/pattern matched) never populates generated_sql.
+    Tier 2 (LLM SQL generation) always does.
+    """
+    if generated_sql is None:
+        return "✅ Verified query"
+    return "🤖 AI-generated (verify results)"
