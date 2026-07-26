@@ -77,6 +77,15 @@ class Intent(Enum):
 
     UNKNOWN = auto()
 
+    #  (a) Intent enum
+    POISONING_HEADLINE       = auto()
+    POISONING_BY_MUNICIPALITY = auto()
+    POISONING_TREND          = auto()
+    POISONING_REPEAT         = auto()
+    POISONING_AGENT          = auto()
+    POISONING_AUDIT          = auto()
+    POISONING_ESTABLISHMENT  = auto()
+    POISONING_QUALITY        = auto()
 
 # ============================================================================
 # ENTITY CONTAINER
@@ -322,6 +331,11 @@ class IntentRouter:
     # ────────────────────────────────────────────────────────────
 
     def _classify_intent(self, e: QueryEntities, query: str) -> Intent:
+
+        from modules.poisoning import classify_poisoning, INTENT_ENUM_NAME
+        psn = classify_poisoning(query)
+        if psn:
+            return Intent[INTENT_ENUM_NAME[psn]]
         """Determine intent from entities + keywords.
 
         Rules are ordered from MOST SPECIFIC to LEAST SPECIFIC.
