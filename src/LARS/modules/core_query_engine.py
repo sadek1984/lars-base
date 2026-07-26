@@ -2500,7 +2500,8 @@ class CoreQueryEngine(AdvancedHandlersMixin):
                            neighborhoods: List[str], pesticide: Optional[str]) -> Tuple[str, Optional[pd.DataFrame]]:
         from modules.poisoning import is_poisoning_domain
         if is_poisoning_domain(query):
-            return self._handle_poisoning(Intent.POISONING_HEADLINE, query, None)
+            text, df, _ = self._handle_poisoning(Intent.POISONING_HEADLINE, query, None)
+        return text, df
         """
         LLM Fallback - Generate SQL using LLM
         Used when no pattern matches
