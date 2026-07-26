@@ -105,6 +105,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             llm_client: Optional pre-configured LLM client
             enable_llm_fallback: Whether to use LLM for unknown queries
         """
+
         self.db_path = db_path or str(DB_PATH)
         self.llm_client = llm_client
         self.enable_llm_fallback = enable_llm_fallback
@@ -849,11 +850,21 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             
             if intent == Intent.RECIPIENT_SEARCH:
                 return self._handle_facility_search(query)  # Same handler for now
-        
+
+            if intent.name.startswith("POISONING_"):
+                return self._handle_poisoning(intent, query, entities)
+
         except Exception as ex:
             logging.warning(f"Intent dispatch error for {intent}: {ex}")
         
         return None  # UNKNOWN → falls through to patterns/LLM
+
+    def _handle_poisoning(self, intent, query, entities=None):
+        from modules.poisoning import handle_poisoning
+        con = self._get_connection()
+        text, df, meta = handle_poisoning(con, intent, entities)
+        return text, df, None
+
     def _extract_context(self, query: str) -> dict:
         """
         Normalize the query and detect all entities (samples, neighborhoods, pesticide, period).
@@ -2487,6 +2498,9 @@ class CoreQueryEngine(AdvancedHandlersMixin):
     
     def _handle_llm_query(self, query: str, samples: List[str], 
                            neighborhoods: List[str], pesticide: Optional[str]) -> Tuple[str, Optional[pd.DataFrame]]:
+        from modules.poisoning import is_poisoning_domain
+        if is_poisoning_domain(query):
+            return self._handle_poisoning(Intent.POISONING_HEADLINE, query, None)
         """
         LLM Fallback - Generate SQL using LLM
         Used when no pattern matches
@@ -2736,11 +2750,12 @@ Key columns:
         detected_pesticide: Optional[str],
     ) -> str:
         """Build the schema-only SQL prompt for Gemini / GPT / Ollama."""
+        from modules.poisoning import POISONING_SCHEMA_CARD
         return load_prompt(
             "sql_llm_fallback",
-            schema=self._get_schema_info(),
             detected_samples=detected_samples or "None",
             detected_neighborhoods=detected_neighborhoods or "None",
+            schema=self._get_schema_info() + "\n" + POISONING_SCHEMA_CARD,
             detected_pesticide=detected_pesticide or "None",
             query=query,
         )
@@ -2750,6 +2765,10 @@ Key columns:
         query: str,
         llm_model: Any = None,
     ) -> Tuple[str, Optional[Any], Optional[str]]:
+
+        from modules.poisoning import is_poisoning_domain
+        if is_poisoning_domain(query):
+            return self._handle_poisoning(Intent.POISONING_HEADLINE, query, None)
         """
         Full query processing with LLM SQL generation as a fallback.
 
