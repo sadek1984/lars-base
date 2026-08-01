@@ -852,7 +852,8 @@ class CoreQueryEngine(AdvancedHandlersMixin):
                 return self._handle_facility_search(query)  # Same handler for now
 
             if intent.name.startswith("POISONING_"):
-                return self._handle_poisoning(intent, query, entities)
+                text, df, _ = self._handle_poisoning(intent, query, entities)
+                return text, df
 
         except Exception as ex:
             logging.warning(f"Intent dispatch error for {intent}: {ex}")

@@ -1,9 +1,0 @@
-FROM python:3.10-slim
-WORKDIR /app
-RUN apt-get update && apt-get install -y gcc && rm -rf /var/lib/apt/lists/*
-COPY requirements.streamlit.txt .
-RUN pip install --no-cache-dir -r requirements.streamlit.txt
-COPY src/LARS /app/src/LARS
-ENV PYTHONPATH=/app/src/LARS
-WORKDIR /app/src/LARS
-CMD ["sh", "-c", "streamlit run app_new.py --server.port=${PORT:-8080} --server.address=0.0.0.0 --server.headless=true"]
