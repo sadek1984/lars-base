@@ -1,0 +1,221 @@
+id,question,extra_0,extra_1
+A001,ابحث عن الإيميداكلوبرايد في الفستق,Find imidacloprid in pistachio,"AN, CM, TRANS"
+A002,ابحث عن bifenthrin في كل العينات,Find bifenthrin across all samples,"AN, MIX"
+A003,ابحث عن الفيبرونيل داخل الفاصوليا,Find fipronil in green beans,"AN, CM, TRANS"
+A004,ابحث عن الكلوربيريفوس في الطماطم,Find chlorpyrifos in tomato,"AN, CM, TRANS"
+A005,هل ظهر الأزوكسي ستروبين في الخيار؟,Did azoxystrobin appear in cucumber?,"AN, CM"
+A006,ما هي عينات الكوسة التي تحتوي على bifenthrin؟,Which zucchini samples contain bifenthrin?,"AN, CM, MIX"
+A007,ما هي عينات الكوسة والباذنجان التي تحتوي على bifenthrin؟,Which zucchini and eggplant samples contain bifenthrin?,"AN, CM×2, MIX"
+A008,ابحث عن الكاربندازيم في الكمون بكل أنواعه,Find carbendazim across all cumin varieties,"AN, CM-variants"
+A009,ما هي عينات الهيل التي تحتوي على التيبوكونازول؟,Which cardamom samples contain tebuconazole?,"AN, CM"
+A010,ابحث عن الأسيتاميبريد في الفلفل البارد الأخضر,Find acetamiprid in green bell pepper,"AN, CM"
+A011,هل يوجد ميتالاكسيل في القهوة؟,Is metalaxyl present in coffee?,"AN, CM"
+A012,ابحث عن البروفينوفوس في الفراولة,Find profenofos in strawberry,"AN, CM"
+A013,ما هي عينات العنب التي تحتوي على البوسكاليد؟,Which grape samples contain boscalid?,"AN, CM"
+A014,ابحث عن الثياميثوكسام في البرتقال,Find thiamethoxam in orange,"AN, CM"
+A015,هل ظهر الإيثيون في التفاح؟,Did ethion appear in apple?,"AN, CM"
+A016,ابحث عن الديفينوكونازول في اليانسون,Find difenoconazole in anise,"AN, CM"
+A017,ما هي عينات اللوز التي تحتوي على الكاربوفيوران؟,Which almond samples contain carbofuran?,"AN, CM"
+A018,ابحث عن السيهالوثرين في الليمون الأسود,Find cyhalothrin in dried lime,"AN, CM"
+A019,هل يوجد إيمامكتين في الشمر؟,Is emamectin present in fennel?,"AN, CM"
+A020,ابحث عن الأبامكتين في طحينة السمسم,Find abamectin in sesame tahini,"AN, CM"
+A021,ما هي الخضروات التي ظهر فيها مبيد البايفنثرين؟,Which vegetables did bifenthrin appear in?,AN → CM list
+A022,في أي منتجات ظهر الكلوربيريفوس؟,In which commodities did chlorpyrifos appear?,AN → CM list
+A023,في أي التوابل ظهر الكاربندازيم؟,In which spices did carbendazim appear?,"AN, CG"
+A024,ما هي المنتجات التي ظهر فيها الفيبرونيل؟,Which commodities contained fipronil?,AN → CM list
+A025,في أي المكسرات ظهرت المبيدات؟,Which nuts showed pesticide detections?,CG
+A026,كم عدد العينات التي تحتوي على مبيد الإيثيون؟,How many samples contain ethion?,"AN, count"
+A027,كم عدد العينات التي ظهر فيها الإيميداكلوبرايد؟,How many samples showed imidacloprid?,"AN, count"
+A028,كم مرة تكرر الأزوكسي ستروبين في كامل البيانات؟,How many times did azoxystrobin recur overall?,"AN, freq"
+A029,ماهي المبيدات التي ظهرت في الهيل مع التكرار وعدد المخالفات,Pesticides in cardamom with frequency and violation count,"CM, 3-col"
+A030,ماهي المبيدات الموجودة في عينة الطماطم وما عدد تكرار كل مبيد؟,Which pesticides are in tomato samples and how often does each recur?,"CM, freq"
+A031,ما هي المبيدات الموجودة في الخيار مرتبة حسب التكرار؟,Pesticides in cucumber ranked by frequency,"CM, rank"
+A032,ما هي المبيدات التي ظهرت في القهوة؟,Which pesticides appeared in coffee?,CM
+A033,ما هي المبيدات التي ظهرت في الفاصوليا؟,Which pesticides appeared in green beans?,CM
+A034,ما هي المبيدات التي ظهرت في الفستق والكاجو كل على حده؟,"Pesticides in pistachio and cashew, separately","CM×2, SPLIT"
+A035,ما هي المبيدات المشتركة بين الطماطم والخيار؟,Which pesticides are common to both tomato and cucumber?,"CM×2, intersect"
+A036,ما هي المبيدات الموجودة في الطماطم وغير موجودة في الخيار؟,Pesticides in tomato but absent from cucumber,"CM×2, diff"
+A037,ما هي المبيدات التي ظهرت مرة واحدة فقط في كامل الفترة؟,Which pesticides appeared exactly once overall?,rare
+A038,ما هي أكثر ١٠ مبيدات تكراراً في التوابل؟,Top 10 most frequent pesticides in spices,"CG, top_n"
+A039,ما هي أكثر ٥ مبيدات تكراراً في الخضراوات؟,Top 5 most frequent pesticides in vegetables,"CG, top_n"
+A040,ما هي المبيدات التي لم تظهر إطلاقاً في الفواكه؟,Which pesticides never appeared in fruit?,"CG, negative"
+A041,ما عدد عينات الطماطم والخيار والكوسة كل على حده؟,"Sample counts for tomato, cucumber, zucchini — separately","CM×3, SPLIT"
+A042,كم عدد عينات الخيار الفريدة بناءً على كود العينة؟,Unique cucumber samples by sample code,"CM, dedup"
+A043,كم عدد العينات الفريدة في الهيل وما عدد تكرار المبيدات فيها؟,Unique cardamom samples and residue recurrence count,"CM, dedup"
+A044,ما إجمالي عدد العينات لكل نوع منتج؟,Total sample count per commodity group,CG
+A045,كم عينة من التوابل مقابل الخضراوات؟,Spices vs vegetables sample count,CG×2
+A046,ما هي أنواع التوابل الموجودة في حي الإسكان؟,Which spice types exist in Al-Iskan neighborhood?,"CG, NB"
+A047,ماهي المبيدات الموجودة في حي الريان والإسكان كل على حده,"Pesticides in Al-Rayyan and Al-Iskan, separately","NB×2, SPLIT"
+A048,ما هي المبيدات الموجودة في حي الجردة؟,Which pesticides are in Al-Jardah?,NB
+A049,ما هي المبيدات الموجودة في حي النهضة وحي الأفق كل على حده؟,"Pesticides in Al-Nahda and Al-Ufuq, separately","NB×2, SPLIT, DUAL"
+A050,في أي الأحياء ظهر الكاربوفيوران؟,In which neighborhoods did carbofuran appear?,AN → NB
+A051,في أي بلديات ظهر الكلوربيريفوس؟,In which municipalities did chlorpyrifos appear?,AN → MU
+A052,ما هي العينات المأخوذة من جمعية البطين الزراعية؟,Which samples came from Al-Batin Agricultural Association?,FC
+A053,ما هي المبيدات الموجودة في عينات بلدية شرق بريدة؟,Pesticides in East Buraidah municipality samples,MU
+A054,قارن المبيدات المكتشفة بين بلدية غرب بريدة وبلدية شمال بريدة,Compare detected pesticides: West vs North Buraidah,MU×2
+A055,ما عدد العينات في كل بلدية مفصلة حسب نوع المنتج؟,"Sample count per municipality, split by commodity group","MU, CG, SPLIT"
+A056,كم عينة ليس لها حي مسجّل؟,How many samples have no recorded neighborhood?,DQ
+A057,كم عينة ليس لها بلدية مسجّلة؟,How many samples have no recorded municipality?,DQ
+A058,ما هي العينات الخالية تماماً من المبيدات؟,Which samples had zero detections?,zero-detect
+A059,ما هي المنتجات التي لم تسجل فيها أي اكتشافات؟,Which commodities recorded no detections at all?,"CM, negative"
+A060,ما الفرق بين عينات Dry وعينات Fresh من حيث المبيدات المكتشفة؟,Dry vs Fresh samples: detected-pesticide comparison,"state, MIX"
+B001,ما هي عينات الطماطم غير المطابقة بسبب البايفنثرين؟,Tomato samples non-compliant due to bifenthrin,"AN, CM, BASIS"
+B002,ما هي عينات الخيار غير المطابقة بسبب البايفنثرين؟,Cucumber samples non-compliant due to bifenthrin,"AN, CM, BASIS"
+B003,عينات تحتوي على الكلوربيريفوس فوق الحد,Samples containing chlorpyrifos above the limit,"AN, BASIS"
+B004,ما هي عينات الطماطم التي تحتوي على البابروفيزن غير المطابقة؟,Non-compliant tomato samples containing buprofezin,"AN, CM, TRANS, BASIS"
+B005,ما عدد عينات الطماطم التي تكون فيها القراءة أكبر من الحدود؟,Tomato samples where reading exceeds the limit,"CM, computed"
+B006,ما عدد عينات الخيار التي تجاوزت الحد المسموح؟,Cucumber samples exceeding the permitted limit,"CM, computed"
+B007,ما هي عينات الكمون المخالفة؟,Which cumin samples are in violation?,"CM, BASIS"
+B008,ما هي عينات الهيل المخالفة وبأي مبيد؟,"Which cardamom samples violate, and by which pesticide?","CM, BASIS"
+B009,ما هي عينات الفلفل الراسبة؟,Which pepper samples failed?,"CM, BASIS"
+B010,ما هي عينات القهوة الراسبة؟,Which coffee samples failed?,"CM, BASIS"
+B011,ما هي عينات الفراولة المخالفة؟,Which strawberry samples are in violation?,"CM, BASIS"
+B012,ما هي عينات العنب المخالفة وبأي تركيز؟,"Which grape samples violate, and at what concentration?","CM, BASIS"
+B013,ما هي عينات البرتقال التي تجاوزت الحد؟,Which orange samples exceeded the limit?,"CM, computed"
+B014,ما هي عينات الفستق المخالفة؟,Which pistachio samples are in violation?,"CM, BASIS"
+B015,ما هي عينات اللوز والكاجو المخالفة كل على حده؟,"Almond and cashew violations, separately","CM×2, SPLIT"
+B016,أوجد Buprofezin بأكثر من ضعفي الحد في الطماطم,Find buprofezin above 2× the limit in tomato,"AN, CM, MULT=2, MIX"
+B017,أوجد الإيميداكلوبرايد بأكثر من ٣ أضعاف الحد في الخيار,Find imidacloprid above 3× the limit in cucumber,"AN, CM, MULT=3"
+B018,ما هي العينات التي تجاوز فيها التركيز ١٠ أضعاف الحد؟,Samples where concentration exceeded 10× the limit,MULT=10
+B019,ما هي العينات التي تجاوز فيها التركيز ضعف الحد في التوابل؟,Spice samples exceeding 2× the limit,"CG, MULT=2"
+B020,ما هي العينات التي تقع تحت الحد المسموح لكن فوق ٨٠٪ منه؟,Samples below the limit but above 80% of it,borderline
+B021,ما هي العينات القريبة من الحد (بين ٩٠٪ و١٠٠٪)؟,Samples in the 90–100% of MRL band,borderline
+B022,أعطني المبيدات والسموم الفطرية فوق الحد وتحت الحد للتوابل,Spices: pesticides and mycotoxins above and below the limit,"CG, split"
+B023,ما عدد المخالفات في الخضراوات مقابل الفواكه؟,Violations in vegetables vs fruit,CG×2
+B024,ما هي العينات التي تجاوزت الحد بمبيدين على الأقل؟,Samples exceeding the limit for at least two pesticides,"DUAL, N≥2"
+B025,ما هي العينات التي تجاوزت الحد بثلاثة مبيدات أو أكثر؟,Samples exceeding the limit for 3+ pesticides,N≥3
+B026,كم عدد المبيدات التي ظهرت في عينات الطماطم وكم منها تسبب في الرسوب؟,Pesticides detected in tomato and how many caused failure,"CM, dual-metric"
+B027,كم تكرارية الإيميداكلوبرايد في الطماطم، وكم عينة طماطم رسبت خلال التكرار؟,Imidacloprid frequency in tomato and how many of those failed,"AN, CM"
+B028,ما نسبة المخالفة لكل مبيد على حده؟,"Violation rate per pesticide, separately","SPLIT, rate"
+B029,ما نسبة المخالفة لكل منتج على حده؟,"Violation rate per commodity, separately","SPLIT, rate"
+B030,ما هي المبيدات التي نسبة مخالفتها أعلى من ٥٠٪؟,Pesticides with a violation rate above 50%,"rate, threshold"
+B031,ما هي المبيدات التي ظهرت ولم تسبب أي مخالفة؟,Pesticides detected that never caused a violation,negative
+B032,ما هي العينات المخالفة التي لا يوجد لها حد مسجل؟,Flagged samples with no recorded MRL,DQ
+B033,كم عدد المتبقيات التي تعذّر تقييمها لعدم وجود حد؟,Residues not evaluable due to missing MRL,DQ
+B034,كم عدد القراءات التي تعذّر تحويلها لرقم؟,How many readings could not be parsed as numeric?,DQ
+B035,ما هي العينات المصنّفة مطابقة رغم وجود قراءة فوق الحد؟,Samples labelled compliant yet containing a reading above the limit,"DQ, BASIS"
+B036,ما الفرق بين عدد المخالفات حسب التصنيف وحسب الحساب؟,Label-based vs computed violation count difference,"DQ, BASIS"
+B037,ما هي عينات الطماطم غير المطابقة في حي الريان؟,Non-compliant tomato samples in Al-Rayyan,"CM, NB"
+B038,ماهي العينات غير المطابقة في حي الريان والإسكان كل على حده,"Non-compliant samples in Al-Rayyan and Al-Iskan, separately","NB×2, SPLIT"
+B039,ما هي العينات غير المطابقة في جمعية البطين الزراعية؟,Non-compliant samples at Al-Batin Agricultural Association,FC
+B040,ما هي العينات غير المطابقة في بلدية الصفراء الفرعية؟,Non-compliant samples in Al-Safra sub-municipality,MU
+B041,كم عدد المخالفات في كل حي مفصلة؟,"Violation count per neighborhood, itemized","NB, SPLIT"
+B042,ما عدد عينات الطماطم الراسبة آخر ٣ شهور؟,Failed tomato samples in the last 3 months,"CM, PD"
+B043,ما هي عينات القهوة الراسبة آخر شهر؟,Failed coffee samples last month,"CM, PD"
+B044,ما هي العينات غير المطابقة في شهر مارس؟,Non-compliant samples in March,PD
+B045,كم عدد المخالفات في شهرين الأخيرين؟,Violations in the last two months,"PD, DUAL"
+B046,ما هي المخالفات في عينات Dry مقابل Fresh؟,Violations in Dry vs Fresh samples,"state, MIX"
+B047,ما هي المنشآت التي تكررت مخالفاتها أكثر من ٣ مرات؟,Facilities with more than 3 repeat violations,"FC, threshold"
+B048,ما هي العينات التي رسبت بسبب مبيد واحد فقط؟,Samples that failed due to a single pesticide only,N=1
+B049,ما نسبة الرسوب في التوابل مقارنة بالمعدل العام؟,Spice failure rate vs the overall average,"CG, rate"
+B050,ما هي أعلى ١٠ قراءات تجاوزاً للحد بالنسبة المئوية؟,Top 10 readings by percentage exceedance of the limit,"top_n, %MRL"
+C001,ما هو عدد العينات التي تحتوي على ٦ مبيدات؟,How many samples contain exactly 6 pesticides?,N=6
+C002,ما عدد العينات التي تحتوي على مبيد واحد و٢ مبيد كل على حده؟,"Samples with 1 pesticide and with 2 pesticides, separately","N=[1,2], SPLIT"
+C003,أوجد عدد العينات الخالية من المبيدات والتي تحتوي على ١ مبيد والتي تحتوي على ٣ مبيدات كل على حده,"Samples with zero, one, and three pesticides, separately","N=[0,1,3], SPLIT"
+C004,ما هي عينات القرنفل التي تحتوي على مبيد واحد؟,Clove samples containing exactly one pesticide,"CM, N=1"
+C005,ما هي العينات التي تحتوي على مبيدين بالضبط؟,Samples containing exactly two pesticides,"N=2, DUAL"
+C006,ما هي العينات التي تحتوي على أكثر من ٥ مبيدات؟,Samples containing more than 5 pesticides,N>5
+C007,ما هي العينات التي تحتوي على ٣ مبيدات على الأقل؟,Samples containing at least 3 pesticides,N≥3
+C008,ما هي العينات التي وصلت للحد الأقصى ١٠ متبقيات؟,Samples that hit the 10-residue ceiling,"N=10, **CENS**"
+C009,ما هو توزيع عدد المبيدات لكل عينة؟,Distribution of residue count per sample,"dist, **CENS**"
+C010,ما عدد المبيدات في كل صنف — مثلاً الطماطم ١٠٠ عينة، ٥٠ بمبيدين و٥٠ بمبيد واحد,Residue-count distribution per commodity,"CM, dist"
+C011,ما هو توزيع عدد المبيدات في الخيار؟,Residue-count distribution in cucumber,"CM, dist"
+C012,ما هو توزيع عدد المبيدات في الكمون؟,Residue-count distribution in cumin,"CM, dist"
+C013,ما هو متوسط عدد المبيدات لكل عينة طماطم؟,Mean residue count per tomato sample,"CM, **CENS**"
+C014,ما هو متوسط عدد المبيدات في التوابل مقابل الخضراوات؟,Mean residue count: spices vs vegetables,"CG×2, **CENS**"
+C015,ما هي المنتجات التي متوسط عدد مبيداتها أعلى من ٤؟,Commodities with mean residue count above 4,"CM, threshold"
+C016,ما هي المبيدات الموجودة في كل عينة من حيث العدد وتركيز كل مبيد، وكم منها متسبب في الرسوب؟,"Per sample: residue list, count, concentrations, and failure contributors",composite
+C017,صنّف المبيدات في العينة ١٧٥٠ حسب المجموعة الكيميائية,Classify pesticides in sample 1750 by chemical class,"sample_code, class"
+C018,أعطني ملخص المجموعات الكيميائية لكل عينة تحتوي على أكثر من ٣ مبيدات,Chemical-class summary for every sample with >3 pesticides,"N>3, class"
+C019,ما هي المجموعات الكيميائية الموجودة في عينات الطماطم؟,Which chemical classes occur in tomato samples?,"CM, class"
+C020,ما هي المجموعة الكيميائية الأكثر تسبباً في المخالفات؟,Which chemical class causes the most violations?,"class, rank"
+C021,ما عدد الاكتشافات لكل مجموعة كيميائية؟,Detection count per chemical class,class
+C022,ما نسبة المخالفة لكل مجموعة كيميائية على حده؟,"Violation rate per chemical class, separately","class, SPLIT, rate"
+C023,ما هي عينات الخيار التي تحتوي على مبيدات من البيرثرويد؟,Cucumber samples containing pyrethroids,"CM, class"
+C024,ما هي عينات الطماطم التي تحتوي على أورجانوفوسفورس؟,Tomato samples containing organophosphates,"CM, class"
+C025,ما هي عينات الطماطم التي تحتوي على أورجانوكلورين؟,Tomato samples containing organochlorines,"CM, class, **EMPTY**"
+C026,ما هو مؤشر الخطر لمجموعة الأورجانوكلورين في الخيار؟,Organochlorine risk index in cucumber,"class, **EMPTY**"
+C027,كم عينة تحتوي على أكثر من مجموعة كيميائية واحدة؟,Samples containing more than one chemical class,"class, N>1"
+C028,كم عينة تحتوي على مبيدين أو أكثر يشتركون في نفس آلية السمّية؟,Samples with ≥2 pesticides sharing a common toxicity mechanism,"CMG, DUAL"
+C029,ما هي العينات التي تحتوي على نيونيكوتينويد وكارباميت معاً؟,Samples containing both neonicotinoids and carbamates,class×2
+C030,ما هو توزيع المجموعات الكيميائية عبر الأحياء؟,Chemical-class distribution across neighborhoods,"class, NB"
+D001,ما هي نسبة المطابقة العامة خلال الفترة؟,Overall compliance rate for the period,"KPI, BASIS"
+D002,كم إجمالي العينات المستلمة وكم عينة فريدة؟,Total samples received and unique sample count,throughput
+D003,ما هو ملخص تنفيذي لأداء المختبر هذا الشهر؟,Executive summary of lab performance this month,"PD, composite"
+D004,ما هو ملخص تنفيذي للربع الأول؟,Executive summary for Q1,"PD, composite"
+D005,ما هي أعلى ٥ مبيدات من حيث عدد المخالفات؟,Top 5 pesticides by violation count,top_n
+D006,ما هي أعلى ١٠ مبيدات من حيث نسبة المخالفة؟,Top 10 pesticides by violation rate,"top_n, rate"
+D007,ما هي أعلى ٥ منتجات من حيث نسبة الرسوب؟,Top 5 commodities by failure rate,"top_n, rate"
+D008,ما هي أعلى ٥ منتجات من حيث عدد المخالفات؟,Top 5 commodities by violation count,top_n
+D009,اعرض الأحياء في ترتيب تنازلي من الأكثر إلى الأقل مخالفة,Rank neighborhoods descending by violations,"NB, rank"
+D010,ما هي أخطر ٥ أحياء من حيث نسبة المخالفة؟,Top 5 riskiest neighborhoods by violation rate,"NB, top_n, rate"
+D011,ما هو أداء كل بلدية من حيث نسبة المطابقة؟,Compliance rate per municipality,"MU, KPI"
+D012,قارن بين بلدية شرق بريدة وبلدية غرب بريدة في نسبة المخالفة,Compare violation rates: East vs West Buraidah,MU×2
+D013,ما هي المنشآت الأكثر تكراراً في المخالفات؟,Which facilities repeat-offend most?,"FC, rank"
+D014,ما هي أعلى ١٠ منشآت من حيث عدد العينات المفحوصة؟,Top 10 facilities by samples tested,"FC, top_n"
+D015,ما عدد العينات المفحوصة شهرياً؟,Monthly tested-sample throughput,"PD, trend"
+D016,كيف تغيرت نسبة المخالفة بين الربع الأول والربع الثاني؟,Q1 vs Q2 violation-rate change,PD×2
+D017,قارن مخالفات الطماطم بين شهرين متتاليين,Compare tomato violations across two consecutive months,"CM, PD, DUAL"
+D018,هل هناك ارتفاع موسمي في المخالفات؟,Is there a seasonal spike in violations?,trend
+D019,ما هو اتجاه نسبة المطابقة على مدى الأشهر؟,Compliance-rate trend across months,trend
+D020,في أي شهر كانت أعلى نسبة مخالفة؟,Which month had the highest violation rate?,"PD, rank"
+D021,ما هي الفئات الغذائية الأعلى خطورة؟,Which food categories carry the highest risk?,"CG, rank"
+D022,ما نسبة كل نوع منتج من إجمالي العينات؟,Share of each commodity group in total samples,"CG, share"
+D023,ما نسبة عينات التوابل من إجمالي المخالفات؟,Spices' share of total violations,"CG, share"
+D024,ما هو توزيع العينات بين Dry و Fresh؟,Dry vs Fresh sample distribution,"state, MIX"
+D025,كم عدد حالات التسمم الغذائي المسجلة؟,Number of recorded food-poisoning incidents,poisoning
+D026,ما هو اتجاه حالات التسمم خلال الفترة؟,Food-poisoning incident trend over the period,"poisoning, trend"
+D027,هل هناك علاقة بين الأحياء الأعلى مخالفة والأحياء الأعلى تسمماً؟,Correlation between high-violation and high-poisoning neighborhoods,"poisoning, NB"
+D028,أعطني تقرير العينات غير المطابقة لشهر مارس (المنتج، المبيد، التركيز، المنطقة، تاريخ الاستلام),March non-compliance report with those five columns,"PD, composite"
+D029,أعطني تقرير مفصل لأعلى ٥ مبيدات من حيث عدد المخالفات مع الأعداد,Detailed report of top 5 pesticides by violation count,"top_n, composite"
+D030,أعطني تقرير المخالفات لكل حي مع عدد العينات ونسبة المخالفة,Per-neighborhood violation report with counts and rates,"NB, composite"
+D031,أعطني تقرير شهري بعدد العينات والمخالفات ونسبة المطابقة,"Monthly report: samples, violations, compliance rate","PD, composite"
+D032,ما هي المنتجات التي لم تسجل أي مخالفة إطلاقاً؟,Which commodities recorded zero violations?,"CM, negative"
+D033,ما هي الأحياء الخالية من المخالفات؟,Which neighborhoods are violation-free?,"NB, negative"
+D034,ما هي الفترة الزمنية التي تغطيها البيانات فعلياً؟,What period does the data actually cover?,**DQ**
+D035,ما نسبة العينات التي تعذّر تقييمها لعدم وجود حد مسجّل؟,% of samples not evaluable due to missing MRL,**DQ**
+D036,ما نسبة السجلات الناقصة في حقل الحي؟,% of records missing the neighborhood field,**DQ**
+D037,ما نسبة السجلات الناقصة في حقل البلدية؟,% of records missing the municipality field,**DQ**
+D038,ما مدى موثوقية بيانات عدد المتبقيات؟,How reliable is the residue-count data?,"**DQ, CENS**"
+D039,ما هي المؤشرات الرئيسية للأداء لهذا الشهر في صفحة واحدة؟,One-page KPI summary for this month,"PD, composite"
+D040,ما هو معدل العينات المفحوصة أسبوعياً؟,Weekly testing throughput rate,"PD, trend"
+D041,هل يوجد اختناق في الطاقة الاستيعابية للمختبر؟,Is there a lab capacity bottleneck?,throughput
+D042,ما هي التوصيات المقترحة بناءً على أنماط المخالفة؟,Recommended actions based on violation patterns,advisory
+D043,ما هي المنتجات التي تستحق زيادة تكرار الفحص؟,Which commodities warrant increased sampling frequency?,advisory
+D044,ما هي الأحياء التي تحتاج حملة رقابية عاجلة؟,Which neighborhoods need an urgent inspection campaign?,"NB, advisory"
+D045,قارن أداء المختبر بين النصف الأول والنصف الثاني من الفترة,Compare lab performance across the first vs second half of the period,PD×2
+E001,ما هو أعلى وأقل تركيز لمبيد الإيميداكلوبرايد؟,Max and min concentration of imidacloprid,"AN, stats"
+E002,ما هو المدى لتركيزات الإيميداكلوبرايد في الطماطم؟,Concentration range of imidacloprid in tomato,"AN, CM, stats"
+E003,ما هو المتوسط والوسيط لمبيد الإيميداكلوبرايد في الطماطم؟,Mean and median of imidacloprid in tomato,"AN, CM, stats"
+E004,ما متوسط تركيز الإيميداكلوبرايد في العينات فوق الحدود؟,Mean imidacloprid concentration in exceeding samples only,"AN, filter"
+E005,ما هو المتوسط والوسيط للأزوكسي ستروبين في الخيار؟,Mean and median of azoxystrobin in cucumber,"AN, CM, stats"
+E006,ما هو أعلى تركيز مسجّل للكلوربيريفوس ولأي عينة؟,Highest recorded chlorpyrifos concentration and in which sample,"AN, stats"
+E007,ما هو الانحراف المعياري لتركيزات الكاربندازيم في التوابل؟,Standard deviation of carbendazim in spices,"AN, CG, stats"
+E008,"ما هي الشرائح المئوية (P25, P50, P75, P95) لتركيزات الأسيتاميبريد؟",Percentiles (P25/P50/P75/P95) of acetamiprid concentrations,"AN, stats"
+E009,ما هي min و max و mean و median لكل مجموعة كيميائية عبر كل العينات؟,min/max/mean/median per chemical class across all samples,"class, stats"
+E010,ما هي min و max و mean و median لكل مبيد في الطماطم؟,min/max/mean/median per pesticide in tomato,"CM, stats, SPLIT"
+E011,ما هي نسبة التركيز إلى الحد (%MRL) لكل متبقي في عينة الطماطم؟,%MRL per residue in tomato samples,"CM, %MRL"
+E012,ما متوسط نسبة %MRL لكل منتج؟,Mean %MRL per commodity,"CM, %MRL"
+E013,ما هي القيم الشاذة (outliers) في تركيزات المبيدات؟,Outlier detection in pesticide concentrations,outlier
+E014,هل توزيع تركيزات الإيميداكلوبرايد طبيعي أم ملتوٍ؟,Is the imidacloprid concentration distribution normal or skewed?,"AN, dist"
+E015,ما هو متوسط التركيز لكل حي على حده؟,"Mean concentration per neighborhood, separately","NB, SPLIT"
+E016,قارن متوسط تركيز الكاربندازيم بين التوابل والخضراوات,Compare mean carbendazim: spices vs vegetables,"AN, CG×2"
+E017,ما هو مؤشر الخطر الصحي (HRI) الإجمالي لعينات الخيار لكل المبيدات المكتشفة، بناءً على معدل استهلاك فئة البالغين في السعودية، باستخدام حدود الداتاسيت الأصلي؟,"Overall HRI for cucumber, all detected pesticides, Saudi adult ingestion rate, Original Dataset MRLs","HRI, canonical"
+E018,ما هو مؤشر الخطر الصحي (HRI) لمجموعة البيرثرويد في عينات الطماطم لفئة البالغين في السعودية؟,"HRI for pyrethroids in tomato, Saudi adults","HRI, class"
+E019,ما هو مؤشر الخطر الصحي (HRI) لمجموعة الأورجانوفوسفورس في عينات الخيار باستخدام حدود EU الفورية؟,"HRI for organophosphates in cucumber, real-time EU MRLs","HRI, class, mrl_source"
+E020,ما هو مؤشر الخطر الصحي (HRI) لمجموعة النيونيكوتينويد في عينات الفلفل لفئة البالغين؟,"HRI for neonicotinoids in pepper, adults","HRI, class"
+E021,ما هو مؤشر الخطر الصحي (HRI) لمجموعة الأورجانوكلورين في عينات الطماطم؟,HRI for organochlorines in tomato,"HRI, class, **EMPTY**"
+E022,ما هو مؤشر الخطر الصحي لأعلى ٣ منتجات استهلاكاً؟,HRI for the three most-consumed commodities,"HRI, top_n"
+E023,قارن مؤشر الخطر الصحي (HRI) للبيرثرويد في الخيار بين فئة البالغين وفئة الأطفال,Compare pyrethroid HRI in cucumber: adults vs children,"HRI, compare-population"
+E024,قارن مؤشر الخطر الصحي (HRI) للنيونيكوتينويد بين الطماطم والخيار لفئة البالغين,"Compare neonicotinoid HRI: tomato vs cucumber, adults","HRI, compare-commodity"
+E025,قارن مؤشر الخطر الصحي (HRI) للأورجانوفوسفورس في الطماطم باستخدام حدود الداتاسيت مقابل حدود EU,Compare organophosphate HRI in tomato: Original Dataset vs EU MRLs,"HRI, compare-mrl_source"
+E026,ما هو معامل الخطر (HQ) لكل مبيد مكتشف في عينة الطماطم؟,Hazard Quotient per detected pesticide in tomato,HQ
+E027,ما هو مؤشر الخطر التراكمي (HI) للمبيدات المشتركة في آلية السمّية في الخيار؟,Cumulative Hazard Index for common-mechanism pesticides in cucumber,"HI, CMG"
+E028,ما هي المبيدات التي تجاوز معامل الخطر (HQ) لها الواحد الصحيح؟,Which pesticides have HQ > 1?,"HQ, threshold"
+E029,احسب مؤشر الجودة لعينات الفلفل,Compute the quality index for pepper samples,"QI, CM"
+E030,احسب مؤشر الجودة لكل منتج على حده,"Compute the quality index per commodity, separately","QI, SPLIT"
+E031,ما هو مؤشر الجودة لكل حي؟,Quality index per neighborhood,"QI, NB"
+E032,كيف تغيّر مؤشر الجودة للطماطم بين الربع الأول والربع الثاني؟,Tomato quality-index change: Q1 vs Q2,"QI, PD×2"
+E033,ما هي العينات ذات أعلى مؤشر خطر صحي؟,Which samples have the highest health risk index?,"HRI, rank"
+E034,هل توجد علاقة بين عدد المبيدات في العينة ومؤشر الخطر؟,Is there a relationship between residue count and risk index?,"correlation, **CENS**"
+E035,ما هو متوسط عدد المبيدات في العينات التي تجاوز مؤشر خطرها الحد الآمن؟,Mean residue count in samples exceeding the safe risk threshold,"HRI, **CENS**"

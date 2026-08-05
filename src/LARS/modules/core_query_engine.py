@@ -2499,14 +2499,17 @@ class CoreQueryEngine(AdvancedHandlersMixin):
     
     def _handle_llm_query(self, query: str, samples: List[str], 
                            neighborhoods: List[str], pesticide: Optional[str]) -> Tuple[str, Optional[pd.DataFrame]]:
+        """
+        LLM Fallback - Generate SQL using LLM
+        Used when no pattern matches. Poisoning-domain queries are
+        intercepted first and routed to the dedicated handler instead
+        of the generic SQL-generation path.
+        """
         from modules.poisoning import is_poisoning_domain
         if is_poisoning_domain(query):
             text, df, _ = self._handle_poisoning(Intent.POISONING_HEADLINE, query, None)
-        return text, df
-        """
-        LLM Fallback - Generate SQL using LLM
-        Used when no pattern matches
-        """
+            return text, df
+
         if self.llm_client is None:
             return None, None
         
