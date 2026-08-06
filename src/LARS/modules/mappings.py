@@ -170,6 +170,23 @@ PESTICIDE_AR_TO_EN: Dict[str, str] = {
     "التيبوكونازول": "tebuconazole",
     # Emamectin
     "الإيماميكتين": "emamectin",
+    # Boscalid (A013)
+    "بوسكاليد": "boscalid",
+    "البوسكاليد": "boscalid",
+    # Difenoconazole (A016)
+    "ديفينوكونازول": "difenoconazole",
+    "الديفينوكونازول": "difenoconazole",
+    # Carbofuran (A017, A050)
+    "كاربوفيوران": "carbofuran",
+    "الكاربوفيوران": "carbofuran",
+    # Cyhalothrin — standalone form, in addition to the existing
+    # "لامدا سيهالوثرين" / "لامدا" entries (A018)
+    "سيهالوثرين": "lambda-cyhalothrin",
+    "السيهالوثرين": "lambda-cyhalothrin",
+    # Emamectin — additional spelling variant missing the extra ي (A019)
+    "إيمامكتين": "emamectin",
+    "الإيمامكتين": "emamectin",
+    "ايمامكتين": "emamectin",
 }
 
 # Reverse lookup: English → list of Arabic names (auto-generated)
@@ -782,6 +799,7 @@ NEIGHBORHOOD_CORRECTIONS: Dict[str, str] = {
     "الروضة": "الروضة", "روضة": "الروضة", "الروضه": "الروضة",
     "الفلاح": "الفلاح", "فلاح": "الفلاح",
     "المنار": "المنار", "منار": "المنار",
+    "الجردة": "الجردة", "جردة": "الجردة",
     # ── English transliterations (longer first so they match before subsets) ──
     "al-iskan":    "الإسكان",
     "al iskan":    "الإسكان",
