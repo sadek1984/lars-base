@@ -1108,7 +1108,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         
         # Continue with other patterns if not comprehensive
         # Pattern 1: Samples with N pesticides (supports multiple counts)
-        pesticide_count_keywords = ['pesticide', 'pesticides']
+        pesticide_count_keywords = ['pesticide', 'pesticides', 'مبيد', 'مبيدات', 'متبقيات', 'متبقي']
         zero_pesticide_keywords = [
             'zero pesticide', 'clean', 'free of pesticides', 'no pesticide',
             'خالية من المبيدات', 'خالية تماما من المبيدات', 'خالية تماماً من المبيدات',

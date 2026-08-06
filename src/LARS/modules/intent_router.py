@@ -330,7 +330,14 @@ class IntentRouter:
 
     def _extract_n_pesticides(self, query: str) -> Optional[List[int]]:
         """Extract pesticide count numbers if query is about N pesticides."""
-        pesticide_kw = ["مبيد", "مبيدات", "pesticide", "pesticides"]
+        # Explicit dual form: "مبيدين" = exactly 2 pesticides. Handled as
+        # a narrow literal check rather than generic dual-suffix stripping,
+        # since automatically treating any "...ين" word as a dual noun
+        # risks false positives on unrelated words.
+        if "مبيدين" in query:
+            return [2]
+
+        pesticide_kw = ["مبيد", "مبيدات", "متبقيات", "متبقي", "pesticide", "pesticides"]
         if not any(kw in query for kw in pesticide_kw):
             return None
         numbers = re.findall(r"(\d+)", query)
