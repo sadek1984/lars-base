@@ -31,6 +31,12 @@ class AdvancedHandlersMixin:
     # ──────────────────────────────────────────────────────────────────────────
     # Health Risk Index  (HRI = concentration × daily_consumption / ADI / BW)
     # ──────────────────────────────────────────────────────────────────────────
+    # TODO(category-5): Add `group_key` parameter to `_handle_health_risk_index`.
+    # NOTE: This trigger fix alone does NOT add chemical-group filtering to
+    # _handle_health_risk_index — C026 asks specifically for the organochlorine
+    # group's HRI in cucumber, and the handler currently computes HRI for ALL
+    # detected pesticides regardless of group. This fix makes the query answer
+    # SOMETHING (better than a hard fail) but the answer will be broader than asked.
     def _handle_health_risk_index(
         self, samples: List[str]
     ) -> Tuple[str, pd.DataFrame]:

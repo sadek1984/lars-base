@@ -542,8 +542,8 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         # استخراج اسم المنشأة من الاستعلام
         # إزالة الكلمات المفتاحية الشائعة
         facility_keywords = ['ابحث', 'عن', 'العينات', 'في', 'منشأة', 'منشاة', 'مصنع', 'مطعم', 
-                            'محل', 'متجر', 'عينات', 'بحث', 'search', 'facility', 'samples']
-        
+                            'محل', 'متجر', 'جمعية', 'الجمعية', 'شركة', 'مؤسسة',
+                            'عينات', 'بحث', 'search', 'facility', 'samples']
         words = query.split()
         facility_name_parts = []
         
@@ -1109,7 +1109,11 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         # Continue with other patterns if not comprehensive
         # Pattern 1: Samples with N pesticides (supports multiple counts)
         pesticide_count_keywords = ['pesticide', 'pesticides']
-        zero_pesticide_keywords = ['zero pesticide', 'clean', 'free of pesticides', 'no pesticide']
+        zero_pesticide_keywords = [
+            'zero pesticide', 'clean', 'free of pesticides', 'no pesticide',
+            'خالية من المبيدات', 'خالية تماما من المبيدات', 'خالية تماماً من المبيدات',
+            'بدون مبيدات', 'خالي من المبيدات',
+        ]
         has_zero_request = any(kw in query_lower for kw in zero_pesticide_keywords)
         
         if any(kw in query_lower for kw in pesticide_count_keywords) or has_zero_request:
@@ -1253,8 +1257,12 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         
         # Pattern 6: Neighborhood ranking
         # "ranking of neighborhoods by violations"
-        if any(kw in query_lower for kw in ['rank', 'ranking', 'worst', 'most violations']) and \
-           any(kw in query_lower for kw in ['neighborhood', 'neighborhoods']):
+        ranking_kws_ar = ['ترتيب', 'الأكثر', 'الاكثر', 'أخطر', 'اخطر']
+        neighborhood_kws_ar = ['حي', 'الأحياء', 'الاحياء', 'أحياء', 'احياء']
+        if (any(kw in query_lower for kw in ['rank', 'ranking', 'worst', 'most violations']) or
+                any(kw in query for kw in ranking_kws_ar)) and \
+           (any(kw in query_lower for kw in ['neighborhood', 'neighborhoods']) or
+                any(kw in query for kw in neighborhood_kws_ar)):
             return self._handle_neighborhood_ranking(date_filter=detected_period)
         
         # Pattern 7: Comprehensive analysis
@@ -1274,18 +1282,29 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             return self._handle_pesticide_stats(detected_pesticide, detected_samples, stats_keywords_found, date_filter=detected_period)
         
         # Pattern HRI: Health Risk Index
-        hri_kws_en = ['health risk index', 'health risk', 'hri', 'risk index']
+        hri_kws_en = [
+            'health risk index', 'health risk', 'hri', 'risk index',
+            'مؤشر الخطر الصحي', 'مؤشر الخطر', 'المخاطر الصحية',
+            'معامل الخطر', 'hq',
+        ]
         if any(kw in query_lower for kw in hri_kws_en) and detected_samples:
             return self._handle_health_risk_index(detected_samples)
 
         # Pattern QI: Quality Index
-        qi_kws_en = ['quality index', 'quality score', 'quality indicator']
+        qi_kws_en = [
+            'quality index', 'quality score', 'quality indicator',
+            'مؤشر الجودة', 'مؤشر جودة', 'درجة الجودة',
+        ]
         if any(kw in query_lower for kw in qi_kws_en) and detected_samples:
             return self._handle_quality_index(detected_samples)
 
         # Pattern CG: Chemical Groups / Classify pesticides
-        cg_kws_en = ['chemical group', 'chemical groups', 'classify pesticide',
-                     'pesticide class', 'group classification']
+        cg_kws_en = [
+            'chemical group', 'chemical groups', 'classify pesticide',
+            'pesticide class', 'group classification',
+            'المجموعة الكيميائية', 'المجموعات الكيميائية', 'مجموعة كيميائية',
+            'تصنيف المبيدات', 'التصنيف الكيميائي',
+        ]
         if any(kw in query_lower for kw in cg_kws_en):
             min_pest = 0
             nums = re.findall(r'(\d+)', query_normalized)
@@ -1320,7 +1339,10 @@ class CoreQueryEngine(AdvancedHandlersMixin):
 
         # Pattern CAT_LIMIT: Category above AND below limit summary
         # "spices above and below permissible limits"
-        cat_both_kws_en = ['above and below', 'above or below', 'above & below']
+        cat_both_kws_en = [
+            'above and below', 'above or below', 'above & below',
+            'فوق الحد وتحت الحد', 'فوق وتحت الحد', 'فوق الحد و تحت الحد',
+        ]
         is_cat_both = any(kw in query_lower for kw in cat_both_kws_en)
         if is_cat_both and _cat_key_process:
             _test_type = None
@@ -1409,7 +1431,11 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         # Pattern 12: Just search for pesticide (no sample filter)
         # "Find fipronil"
         search_keywords = ['find', 'search', 'locate']
-        if detected_pesticide and any(kw in query_lower for kw in search_keywords):
+        search_keywords_ar = ['ابحث', 'دور', 'اوجد', 'أوجد']
+        if detected_pesticide and (
+            any(kw in query_lower for kw in search_keywords)
+            or any(kw in query for kw in search_keywords_ar)
+        ):
             return self._handle_find_pesticide_all(detected_pesticide, date_filter=detected_period)
         
         # Pattern 14: Simple sample count (NO CONDITIONS)
