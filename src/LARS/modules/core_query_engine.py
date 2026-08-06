@@ -31,6 +31,7 @@ from modules.mappings import (
     normalize_arabic_query,
     get_pesticide_variants,
     get_pesticide_sql_filter,
+    normalize_arabic_text
 )
 
 # Semantic pattern recognizer (optional - graceful fallback if not available)
@@ -321,13 +322,26 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         query_lower = query.lower()
         remaining_lower = query_lower  # track consumed text to avoid sub-matches
 
-        # Sort by length descending — match "cherry tomato" before "tomato"
+        from modules.mappings import SAMPLE_CORRECTIONS_NORM, normalize_arabic_text
+        norm_query = normalize_arabic_text(query)
+        remaining_norm = norm_query
+        remaining_lower_en = query.lower()  # kept for English keys only
+
+        # Arabic keys — normalized match
+        for norm_key in sorted(SAMPLE_CORRECTIONS_NORM.keys(), key=len, reverse=True):
+            if any('\u0600' <= c <= '\u06ff' for c in norm_key):
+                if norm_key in remaining_norm:
+                    detected.append(SAMPLE_CORRECTIONS_NORM[norm_key])
+                    remaining_norm = remaining_norm.replace(norm_key, " " * len(norm_key), 1)
+
+        # English keys — original .lower() substring match (unaffected by
+        # the Arabic normalization gap, left as-is)
         for key in sorted(self.sample_types.keys(), key=len, reverse=True):
-            db_value = self.sample_types[key]
-            if key in remaining_lower:
-                detected.append(db_value)
-                # Remove matched key to prevent sub-matches
-                remaining_lower = remaining_lower.replace(key, " " * len(key), 1)
+            if not any('\u0600' <= c <= '\u06ff' for c in key):
+                db_value = self.sample_types[key]
+                if key in remaining_lower_en:
+                    detected.append(db_value)
+                    remaining_lower_en = remaining_lower_en.replace(key, " " * len(key), 1)
 
         # Category expansion — uses English "نوع العينة" values from DB
         # CATEGORY_EN imported from modules.mappings — single source of truth
@@ -366,17 +380,63 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         return list(set(detected))
     
     def _detect_pesticide(self, query: str) -> Optional[str]:
-        """كشف المبيد (English only detection)"""
+        """
+        كشف المبيد — Arabic-first, English fallback.
+
+        BUGFIX: the original version only checked whether the English
+        canonical name appeared literally in the query text — which
+        only ever matches Latin-script mentions embedded in an Arabic
+        sentence (e.g. "ابحث عن bifenthrin"). Pure-Arabic pesticide
+        names like "الإيميداكلوبرايد" never matched here even though
+        the exact same string correctly resolves via
+        IntentRouter._extract_pesticide()'s PESTICIDE_AR_TO_EN lookup.
+        Since this method feeds ctx['detected_pesticide'] — shared by
+        Tier 0, the semantic tier, and Tier 3 — that gap silently
+        broke every Arabic-only pesticide query that Tier 2 didn't
+        already classify into a pesticide-carrying intent.
+
+        Order:
+          1. Arabic key match against self.arabic_pesticide_map
+             (== PESTICIDE_AR_TO_EN), longest key first so e.g.
+             "الأيميداكلوبريد" doesn't get shadowed by a shorter
+             partial key.
+          2. English canonical name literal match (Latin-script
+             mentions mid-Arabic-sentence, e.g. "bifenthrin").
+          3. Common-name fallback list (English), for names that
+             might be missing from PESTICIDE_AR_TO_EN's keys.
+        """
+        # 1. Arabic — normalized match (handles hamza/ta-marbuta/ال-prefix
+        # spelling variants). Longest keys first to avoid short-prefix
+        # shadowing, e.g. matching "بابروفيزن" before a shorter substring
+        # of a different pesticide name.
+        from modules.mappings import (
+            PESTICIDE_AR_TO_EN_NORM,
+            PESTICIDE_AR_TO_EN_NORM_NOSPACE,
+            normalize_arabic_text,
+        )
+        norm_query = normalize_arabic_text(query)
+        for norm_key in sorted(PESTICIDE_AR_TO_EN_NORM.keys(), key=len, reverse=True):
+            if norm_key in norm_query:
+                return PESTICIDE_AR_TO_EN_NORM[norm_key]
+
+        # 1b. Arabic — space-insensitive fallback for compound transliterated
+        # names (e.g. "الأزوكسي ستروبين" vs dict's "الازوكسيستروبين").
+        # Scoped to pesticide names only — see mappings.py for rationale.
+        nospace_query = norm_query.replace(" ", "")
+        for norm_key in sorted(PESTICIDE_AR_TO_EN_NORM_NOSPACE.keys(), key=len, reverse=True):
+            if norm_key in nospace_query:
+                return PESTICIDE_AR_TO_EN_NORM_NOSPACE[norm_key]
+
+        # 2. English canonical values, literal substring match
         query_lower = query.lower()
-        
-        # 1. Search English values directly
-        # Sort values by length descending to match longer names first
-        unique_en_pesticides = sorted(list(set(self.arabic_pesticide_map.values())), key=len, reverse=True)
+        unique_en_pesticides = sorted(
+            set(self.arabic_pesticide_map.values()), key=len, reverse=True
+        )
         for en_name in unique_en_pesticides:
             if en_name.lower() in query_lower:
                 return en_name
-                
-        # 2. Add common ones that might be missing from AR_TO_EN keys
+
+        # 3. Common-name fallback (in case PESTICIDE_AR_TO_EN is missing some)
         pesticide_names_common = [
             'bifenthrin', 'chlorpyrifos', 'imidacloprid', 'deltamethrin', 'cypermethrin',
             'abamectin', 'acetamiprid', 'thiamethoxam', 'carbendazim', 'buprofezin',
@@ -386,7 +446,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         for en_name in pesticide_names_common:
             if en_name in query_lower:
                 return en_name
-                
+
         return None
 
 

@@ -23,7 +23,43 @@ from __future__ import annotations
 
 from difflib import get_close_matches
 from typing import Dict, List, Optional
+import re
+import unicodedata
 
+# ============================================================================
+# ARABIC TEXT NORMALIZATION (for dictionary matching only)
+# ============================================================================
+# Mirrors modules.poisoning.router_gate.norm_q() so pesticide/sample/
+# neighborhood matching behaves consistently with the poisoning domain gate.
+# This does NOT replace normalize_arabic_query() above (which handles
+# numerals) — it runs in addition, specifically to make dictionary lookups
+# spelling-variant tolerant.
+
+_DIACRITICS_RE = re.compile(r"[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]")
+
+
+def normalize_arabic_text(s: str) -> str:
+    """
+    Normalize Arabic text for dictionary key matching.
+
+    Steps: NFKC normalize -> strip diacritics/tatweel -> unify hamza
+    carriers (أ/إ/آ -> ا, ؤ -> و, ئ -> ي) -> unify ى -> ي, ة -> ه.
+
+    Use this on BOTH the dictionary keys (once, at load time, via the
+    _NORM dicts below) and the incoming query text (at detection time)
+    so they compare on equal footing. Comparing a normalized query
+    against un-normalized keys (or vice versa) will silently fail.
+    """
+    if not s:
+        return s
+    s = unicodedata.normalize("NFKC", s)
+    s = _DIACRITICS_RE.sub("", s).replace("\u0640", "")
+    s = (
+        s.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
+         .replace("ى", "ي").replace("ة", "ه")
+         .replace("ؤ", "و").replace("ئ", "ي")
+    )
+    return s
 
 # ============================================================================
 # PESTICIDE MAPPINGS: Arabic → English
@@ -946,4 +982,63 @@ CATEGORY_EN: Dict[str, str] = {
     "grains":     "Grains",
     "leafy":      "Leafy Greens",
     "dates":      "Dates",
+}
+
+# ============================================================================
+# NORMALIZED LOOKUP DICTS (built once at import time)
+# ============================================================================
+# Keys are normalize_arabic_text()'d versions of the originals. Callers
+# doing Arabic dictionary matching should normalize the query text with
+# normalize_arabic_text() and check against these, NOT the raw dicts —
+# otherwise hamza/ta-marbuta/alif-maqsura spelling variants won't match.
+#
+# NOTE: if two differently-spelled original keys normalize to the SAME
+# string, the later one in dict iteration order wins (standard dict
+# overwrite behavior). This is acceptable here since all known variants
+# of a given pesticide/sample already map to the same canonical value.
+
+def _build_norm_dict_with_al_variants(source: Dict[str, str]) -> Dict[str, str]:
+    """
+    Build a normalized lookup dict where EVERY entry exists both with and
+    without a leading 'ال' (definite article), regardless of which form
+    was originally typed into the source dict.
+
+    Why: many entries in PESTICIDE_AR_TO_EN / SAMPLE_CORRECTIONS /
+    NEIGHBORHOOD_CORRECTIONS only have one of the two forms hand-entered
+    (e.g. "ايميداكلوبرايد" but not "الايميداكلوبرايد"). Auditing every
+    entry manually is error-prone; generating both forms here means a
+    future new entry only needs to be added once, in whichever form is
+    convenient, and both will resolve.
+
+    Note: if a bare form and its 'ال'-prefixed form normalize to two
+    DIFFERENT canonical values in the source dict (shouldn't happen for
+    pesticide/sample names, but just in case), the bare form's mapping
+    wins for the bare key and the prefixed form's mapping wins for the
+    prefixed key — i.e. explicit entries are never overwritten by a
+    generated variant of a different entry.
+    """
+    normalized = {normalize_arabic_text(k): v for k, v in source.items()}
+    generated: Dict[str, str] = {}
+    for norm_key, val in normalized.items():
+        if norm_key.startswith("ال") and len(norm_key) > 2:
+            bare = norm_key[2:]
+            generated.setdefault(bare, val)
+        else:
+            prefixed = "ال" + norm_key
+            generated.setdefault(prefixed, val)
+    # Explicit entries take priority over generated ones
+    generated.update(normalized)
+    return generated
+
+
+PESTICIDE_AR_TO_EN_NORM: Dict[str, str] = _build_norm_dict_with_al_variants(PESTICIDE_AR_TO_EN)
+SAMPLE_CORRECTIONS_NORM: Dict[str, str] = _build_norm_dict_with_al_variants(SAMPLE_CORRECTIONS)
+NEIGHBORHOOD_CORRECTIONS_NORM: Dict[str, str] = _build_norm_dict_with_al_variants(NEIGHBORHOOD_CORRECTIONS)
+
+# ============================================================================
+# SPACE-INSENSITIVE PESTICIDE MATCHING
+# ============================================================================
+
+PESTICIDE_AR_TO_EN_NORM_NOSPACE: Dict[str, str] = {
+    k.replace(" ", ""): v for k, v in PESTICIDE_AR_TO_EN_NORM.items()
 }

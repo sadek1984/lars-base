@@ -35,10 +35,14 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from modules.mappings import (
     PESTICIDE_AR_TO_EN,
+    PESTICIDE_AR_TO_EN_NORM,
     SAMPLE_CORRECTIONS,
     SAMPLE_EN_TO_AR,
     NEIGHBORHOOD_CORRECTIONS,
+    NEIGHBORHOOD_CORRECTIONS_NORM,
     normalize_arabic_query,
+    normalize_arabic_text,
+    PESTICIDE_AR_TO_EN_NORM_NOSPACE,
 )
 
 logger = logging.getLogger(__name__)
@@ -286,18 +290,26 @@ class IntentRouter:
         return detected
 
     def _extract_neighborhoods(self, query: str) -> List[str]:
-        """Detect neighborhood names."""
+        """Detect neighborhood names, normalized match."""
         detected = []
-        for variant, canonical in NEIGHBORHOOD_CORRECTIONS.items():
-            if variant in query and canonical not in detected:
+        norm_query = normalize_arabic_text(query)
+        for norm_variant, canonical in NEIGHBORHOOD_CORRECTIONS_NORM.items():
+            if norm_variant in norm_query and canonical not in detected:
                 detected.append(canonical)
         return detected
 
     def _extract_pesticide(self, query: str) -> Optional[str]:
-        """Detect a single pesticide (Arabic → English)."""
-        for ar_name, en_name in PESTICIDE_AR_TO_EN.items():
-            if ar_name in query:
-                return en_name
+        """Detect a single pesticide (Arabic → English), normalized + space-insensitive match."""
+        norm_query = normalize_arabic_text(query)
+        for norm_key in sorted(PESTICIDE_AR_TO_EN_NORM.keys(), key=len, reverse=True):
+            if norm_key in norm_query:
+                return PESTICIDE_AR_TO_EN_NORM[norm_key]
+
+        nospace_query = norm_query.replace(" ", "")
+        for norm_key in sorted(PESTICIDE_AR_TO_EN_NORM_NOSPACE.keys(), key=len, reverse=True):
+            if norm_key in nospace_query:
+                return PESTICIDE_AR_TO_EN_NORM_NOSPACE[norm_key]
+
         return None
 
     def _extract_category(self, query: str) -> Optional[str]:

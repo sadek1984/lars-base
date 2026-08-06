@@ -85,12 +85,32 @@ def call_engine(engine, question: str):
     return text, df, meta
 
 
+# This is the literal fallback text from _handle_unknown_query() in
+# core_query_engine.py. process() returns exactly this string (as the
+# opening line) when NOTHING matched — Tier 0/1/2/3 all missed. This is
+# the only reliable "did it actually answer" signal available from
+# process()'s 2-tuple return; there is no meta dict to inspect.
+_UNKNOWN_MARKER = "Sorry, I couldn't fully understand your question"
+
+
+def is_unanswered(text: str) -> bool:
+    """True if the engine fell through to _handle_unknown_query()."""
+    return bool(text) and _UNKNOWN_MARKER in text
+
+
 def infer_tier(meta: dict, text: str) -> str:
     """
-    Best-effort tier classification for the baseline record.
-    ADJUST field names to whatever your engine actually sets in meta.
-    Falls back to a text heuristic on your existing trust-badge emoji
-    convention (✅ Verified query vs 🤖 AI-generated) if meta is empty.
+    Best-effort tier label for the baseline record.
+
+    NOTE: engine.process() returns a plain (str, DataFrame) 2-tuple in
+    this codebase — no meta dict is available, so this almost always
+    falls through to the text-based branch below. It intentionally does
+    NOT use '✅' as a signal: that emoji appears in nearly every
+    successful handler's output as a plain content bullet (e.g.
+    "✅ Found 2 unique sample(s)"), not just in get_trust_badge()'s
+    output, which process() never actually calls. Treat this column as
+    a rough label only — is_unanswered()/'status' below is the real
+    success/failure signal.
     """
     if meta:
         if meta.get("generated_sql") not in (None, ""):
@@ -99,12 +119,9 @@ def infer_tier(meta: dict, text: str) -> str:
             return "tier1_2_intent_or_pattern"
         if meta.get("tier"):
             return str(meta["tier"])
-    if text:
-        if "✅" in text or "Verified" in text:
-            return "deterministic_or_pattern (heuristic)"
-        if "🤖" in text or "AI-generated" in text:
-            return "llm (heuristic)"
-    return "unknown"
+    if is_unanswered(text):
+        return "unanswered"
+    return "answered (tier unknown - no meta from process())"
 
 
 def main():
@@ -147,6 +164,7 @@ def main():
             text, df, meta = call_engine(engine, question)
             latency_ms = round((time.perf_counter() - t0) * 1000, 1)
 
+            record["status"] = "unanswered" if is_unanswered(text) else "ok"
             record["tier_hit"] = infer_tier(meta, text)
             record["handler"] = meta.get("handler", meta.get("intent", ""))
             record["generated_sql_present"] = bool(meta.get("generated_sql"))
@@ -174,10 +192,12 @@ def main():
 
     # --- summary ---
     n_ok = sum(1 for r in results if r["status"] == "ok")
+    n_unanswered = sum(1 for r in results if r["status"] == "unanswered")
     n_err = sum(1 for r in results if r["status"] == "exception")
     n_zero = sum(1 for r in results if r["status"] == "ok" and r["row_count"] in (0, "0"))
     print(f"\nDone. {out_path} written.")
-    print(f"  ok: {n_ok}  exceptions: {n_err}  zero-row results: {n_zero}")
+    print(f"  ok (answered): {n_ok}  unanswered (fell to _handle_unknown_query): {n_unanswered}"
+          f"  exceptions: {n_err}  zero-row among 'ok': {n_zero}")
     if n_err:
         print("  Review stderr above for tracebacks on failing IDs.")
 

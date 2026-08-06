@@ -42,8 +42,9 @@ def main():
             unchanged += 1
             continue
 
-        was_broken = old_row["status"] == "exception" or old_row["row_count"] in ("0", "")
-        now_broken = new_row["status"] == "exception" or new_row["row_count"] in ("0", "")
+        broken_statuses = ("exception", "unanswered")
+        was_broken = old_row["status"] in broken_statuses
+        now_broken = new_row["status"] in broken_statuses
 
         entry = {"id": qid, "question": old_row["question"][:80], "changes": changed}
         if now_broken and not was_broken:
