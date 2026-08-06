@@ -967,6 +967,108 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             'category_key': category_key,
         }
 
+    def _handle_out_of_scope(self, reason_type: str, detail: str = "") -> str:
+        """
+        Returns a bilingual, honest 'can't answer as posed' response for
+        genuinely out-of-scope requests, instead of the generic
+        _handle_unknown_query fallback. reason_type controls which
+        template is used — see the four branches below.
+        """
+        if reason_type == "subjective_recommendation":
+            return (
+                "⚠️ **لا يمكنني اقتراح توصيات أو أولويات — هذا يتطلب حكماً بشرياً "
+                "بناءً على السياق التشغيلي.**\n\n"
+                "يمكنني عرض البيانات التي قد تُبنى عليها هذه القرارات، مثل: "
+                "أعلى المنتجات من حيث نسبة المخالفة، أو الأحياء الأكثر مخالفة.\n\n"
+                "*I can't generate recommendations or priorities — that requires "
+                "operational judgment. I can show the underlying data instead, "
+                "like top products by violation rate, or the most non-compliant "
+                "neighborhoods.*"
+            )
+        elif reason_type == "data_not_tracked":
+            return (
+                f"⚠️ **لا تحتوي قاعدة البيانات على {detail}.**\n"
+                "هذا النوع من البيانات غير مُسجَّل في النظام الحالي.\n\n"
+                f"*This data isn't tracked in the current system — there's no "
+                f"{detail} field in the dataset.*"
+            )
+        elif reason_type == "needs_method_definition":
+            return (
+                f"⚠️ **هذا السؤال يحتاج إلى تعريف منهجية محددة قبل الإجابة عليه** "
+                f"({detail}).\n"
+                "هذا قيد المراجعة حالياً وليس متاحاً بعد.\n\n"
+                f"*This needs a defined method before it can be answered ({detail}). "
+                f"Not available yet — flagged for review.*"
+            )
+        elif reason_type == "too_compound":
+            return (
+                "⚠️ **هذا السؤال يجمع عدة أجزاء معاً.** جرّب تقسيمه إلى أسئلة أصغر — "
+                "مثلاً اسأل أولاً عن قائمة المبيدات في العينة، ثم عن نسبة المخالفات "
+                "لكل مبيد على حده.\n\n"
+                "*This combines several sub-questions — try splitting it, e.g. ask "
+                "for the pesticide list first, then the violation rate per "
+                "pesticide separately.*"
+            )
+        # Fallback (shouldn't normally be hit if callers pass a known reason_type)
+        return self._handle_unknown_query("")
+
+    def _check_out_of_scope(self, query: str, query_lower: str) -> Optional[Tuple[str, Optional[pd.DataFrame]]]:
+        """
+        Checked FIRST, before any tier. Catches genuinely out-of-scope
+        requests (subjective recommendations, untracked data, undefined
+        methodology, MOA-level questions your data can't answer) so they
+        can never be misrouted by a coincidental keyword match deeper in
+        the pipeline — e.g. Tier 2's "مبيدين" dual-form shortcut hijacking
+        a mechanism-of-action question into "samples with 2 pesticides".
+        Returns None if the query is in-scope (falls through to Tier 0+).
+        """
+        recommendation_kws = [
+            'التوصيات', 'توصيات مقترحة', 'تستحق زيادة', 'تحتاج حملة',
+            'recommend', 'recommendation',
+        ]
+        if any(kw in query_lower or kw in query for kw in recommendation_kws):
+            return self._handle_out_of_scope("subjective_recommendation"), None
+
+        capacity_kws = ['الطاقة الاستيعابية', 'اختناق', 'bottleneck', 'capacity']
+        if any(kw in query_lower or kw in query for kw in capacity_kws):
+            return self._handle_out_of_scope(
+                "data_not_tracked", "بيانات الطاقة الاستيعابية أو معدل الإنتاجية للمختبر"
+            ), None
+
+        # Mechanism-of-action — confirmed pesticide_groups.py has no MOA
+        # data, only classify_pesticide() at the chemical-group level.
+        moa_kws = ['آلية السمّية', 'آلية السمية', 'نفس آلية', 'mechanism of action', 'moa']
+        if any(kw in query for kw in moa_kws):
+            return self._handle_out_of_scope(
+                "needs_method_definition",
+                "البيانات الحالية تصنّف حسب المجموعة الكيميائية فقط، وليس آلية السمّية على مستوى أدق",
+            ), None
+
+        undefined_method_kws = {
+            'موسمي': "كيف يُعرَّف 'الموسمي'",
+            'قيمة شاذة': "كيف تُعرَّف 'القيمة الشاذة' — IQR أم z-score",
+            'القيم الشاذة': "كيف تُعرَّف 'القيمة الشاذة' — IQR أم z-score",
+            'outlier': "how 'outlier' is defined — IQR or z-score",
+            'علاقة بين': "طريقة حساب الارتباط الإحصائي (معامل بيرسون مثلاً)",
+            'correlation': "the correlation method (e.g. Pearson's r)",
+        }
+        for kw, detail in undefined_method_kws.items():
+            if kw in query_lower or kw in query:
+                return self._handle_out_of_scope("needs_method_definition", detail), None
+
+        risk_category_kws = ['الفئات الغذائية الأعلى خطورة', 'أعلى خطورة']
+        if any(kw in query for kw in risk_category_kws):
+            return self._handle_out_of_scope(
+                "needs_method_definition",
+                "يحتاج مؤشر الخطر الصحي (HRI) لكل فئة أولاً، ثم تحديد حد أدنى للخطورة",
+            ), None
+
+        compound_kws = ['من حيث العدد وتركيز', 'وكم منها متسبب']
+        if any(kw in query for kw in compound_kws):
+            return self._handle_out_of_scope("too_compound"), None
+
+        return None
+
     def process(self, query: str) -> Tuple[str, Optional[pd.DataFrame]]:
         """
         Process a query and return (response_text, DataFrame | None).
@@ -992,6 +1094,15 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         period_label          = ctx['detected_period_label']
 
         result: Optional[Tuple[str, Optional[pd.DataFrame]]] = None
+
+        # ── Tier -1: Out-of-scope gate — runs BEFORE any tier, including
+        # Tier 2's intent router, so a superficial keyword match deep inside
+        # a tier (e.g. the word "مبيدين" appearing inside an unrelated MOA
+        # question) can never hijack an out-of-scope query into a wrong
+        # answer. See core_query_engine.py's _check_out_of_scope() below.
+        oos_result = self._check_out_of_scope(query, query_lower)
+        if oos_result is not None:
+            return oos_result
 
         # ── Tier 0: Explicit compliance-status override ──────────────────────
         # Official lab verdict (sample_result) keywords — "غير مطابقة" / "راسبة" /
@@ -1305,7 +1416,12 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             'المجموعة الكيميائية', 'المجموعات الكيميائية', 'مجموعة كيميائية',
             'تصنيف المبيدات', 'التصنيف الكيميائي',
         ]
-        if any(kw in query_lower for kw in cg_kws_en):
+        cg_exclude_kws = [
+            'الأكثر تسبباً', 'الأكثر تسببا', 'أكثر من مجموعة', 'اكثر من مجموعة',
+            'نسبة المخالفة لكل مجموعة', 'توزيع المجموعات',
+        ]
+        is_cg_excluded = any(kw in query for kw in cg_exclude_kws)
+        if any(kw in query_lower for kw in cg_kws_en) and not is_cg_excluded:
             min_pest = 0
             nums = re.findall(r'(\d+)', query_normalized)
             threshold_kws_cg = ['more than', 'greater than']
