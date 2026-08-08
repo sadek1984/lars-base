@@ -470,6 +470,234 @@ class AdvancedHandlersMixin:
         return response, df
 
 
+    def _handle_exceedance_multiplier(
+        self, samples: List[str], multiplier: float,
+        category_key: Optional[str] = None,
+    ) -> Tuple[str, pd.DataFrame]:
+        """Samples where concentration exceeded `multiplier`x the MRL. B018, B019."""
+        from modules.mappings import CATEGORY_AR
+        if samples:
+            conditions = [f"\"اسم العينة\" LIKE '%{s}%'" for s in samples]
+        elif category_key and category_key in CATEGORY_AR:
+            conditions = [f"\"اسم العينة\" LIKE '%{ar}%'" for ar in CATEGORY_AR[category_key]]
+        else:
+            conditions = ["1=1"]
+        sample_filter = f"({' OR '.join(conditions)})"
+        con = self._get_connection()
+        sql = f"""
+        SELECT "كود العينة" AS sample_code, "اسم العينة" AS sample_name,
+               pesticide_name AS pesticide, concentration, limit_value AS mrl,
+               ROUND(exceedance_ratio, 2) AS ratio
+        FROM chemistry_tidy
+        WHERE is_detected = 1 AND limit_value > 0 AND exceedance_ratio >= {multiplier}
+          AND {sample_filter}
+        ORDER BY exceedance_ratio DESC LIMIT 100
+        """
+        df = con.execute(sql).df()
+        con.close()
+        label = " + ".join(samples) if samples else (category_key or "جميع العينات")
+        if df.empty:
+            return f"⚠️ لم أجد عينات تجاوزت {multiplier}× الحد المسموح في {label}", df
+        response = f"📊 **عينات تجاوزت {multiplier}× الحد المسموح — {label}:**\n\n✅ العدد: **{len(df)}**\n\n"
+        response += df.to_markdown(index=False)
+        return response, df
+
+    def _handle_limit_proximity_band(
+        self, samples: List[str], low_pct: float, high_pct: float,
+    ) -> Tuple[str, pd.DataFrame]:
+        """Samples between low_pct% and high_pct% of MRL. B020, B021."""
+        sample_filter = ""
+        if samples:
+            conditions = [f"\"اسم العينة\" LIKE '%{s}%'" for s in samples]
+            sample_filter = f"AND ({' OR '.join(conditions)})"
+        con = self._get_connection()
+        sql = f"""
+        SELECT "كود العينة" AS sample_code, "اسم العينة" AS sample_name,
+               pesticide_name AS pesticide, concentration, limit_value AS mrl,
+               ROUND(exceedance_ratio * 100, 1) AS pct_of_mrl
+        FROM chemistry_tidy
+        WHERE is_detected = 1 AND limit_value > 0
+          AND exceedance_ratio * 100 >= {low_pct} AND exceedance_ratio * 100 < {high_pct}
+          {sample_filter}
+        ORDER BY pct_of_mrl DESC LIMIT 100
+        """
+        df = con.execute(sql).df()
+        con.close()
+        label = " + ".join(samples) if samples else "جميع العينات"
+        if df.empty:
+            return f"⚠️ لم أجد عينات بين {low_pct}% و{high_pct}% من الحد في {label}", df
+        response = f"📊 **عينات بين {low_pct}% و{high_pct}% من الحد المسموح — {label}:**\n\n"
+        response += df.to_markdown(index=False)
+        return response, df
+
+    def _handle_global_violation_rate(self, group_by: str) -> Tuple[str, pd.DataFrame]:
+        """Global violation % by pesticide or product, no filter. B028, B029."""
+        col = "pesticide_name" if group_by == "pesticide" else '"اسم العينة"'
+        label_col = "pesticide" if group_by == "pesticide" else "sample_type"
+        con = self._get_connection()
+        sql = f"""
+        SELECT {col} AS {label_col}, COUNT(*) AS total_detections,
+               SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) AS violations,
+               ROUND(100.0 * SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS violation_pct
+        FROM chemistry_tidy
+        WHERE is_detected = 1 AND pesticide_name NOT IN ('NO DETECTION', 'NO DATA')
+        GROUP BY {col} HAVING COUNT(*) >= 5 ORDER BY violation_pct DESC LIMIT 50
+        """
+        df = con.execute(sql).df()
+        con.close()
+        if df.empty:
+            return "⚠️ لم أجد بيانات كافية", df
+        title = "لكل مبيد" if group_by == "pesticide" else "لكل منتج"
+        response = f"📊 **نسبة المخالفة {title} (عام):**\n\n*(العناصر ذات أقل من 5 اكتشافات مستبعدة)*\n\n"
+        response += df.to_markdown(index=False)
+        return response, df
+
+    def _handle_zero_violations(self, entity_type: str) -> Tuple[str, pd.DataFrame]:
+        """Entities with detections but ZERO violations. B031, D032, D033."""
+        col_map = {"pesticide": ("pesticide_name", "pesticide"),
+                   "product": ('"اسم العينة"', "sample_type"),
+                   "neighborhood": ('"الحى"', "neighborhood")}
+        col, label = col_map[entity_type]
+        con = self._get_connection()
+        sql = f"""
+        SELECT {col} AS {label}, COUNT(*) AS total_detections
+        FROM chemistry_tidy
+        WHERE is_detected = 1 AND pesticide_name NOT IN ('NO DETECTION', 'NO DATA')
+        GROUP BY {col} HAVING SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) = 0
+        ORDER BY total_detections DESC LIMIT 100
+        """
+        df = con.execute(sql).df()
+        con.close()
+        titles = {"pesticide": "المبيدات", "product": "المنتجات", "neighborhood": "الأحياء"}
+        if df.empty:
+            return f"⚠️ لم أجد {titles[entity_type]} بدون أي مخالفة", df
+        response = f"🟢 **{titles[entity_type]} بدون أي مخالفة مسجّلة:**\n\n✅ العدد: **{len(df)}**\n\n"
+        response += df.to_markdown(index=False)
+        return response, df
+
+    def _handle_top_n_by_metric(self, entity: str, metric: str, n: int = 5) -> Tuple[str, pd.DataFrame]:
+        """Top N products/facilities by violation count or rate. D007, D008, D014."""
+        col_map = {"product": '"اسم العينة"', "facility": '"اسم المنشاة"'}
+        col = col_map.get(entity)
+        if not col:
+            return "⚠️ نوع غير معروف", pd.DataFrame()
+        order_col = "violations" if metric == "count" else "violation_rate_pct"
+        con = self._get_connection()
+        sql = f"""
+        SELECT {col} AS entity_name, COUNT(DISTINCT "كود العينة") AS total_samples,
+               SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) AS violations,
+               ROUND(100.0 * SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) /
+                     NULLIF(COUNT(DISTINCT "كود العينة"), 0), 1) AS violation_rate_pct
+        FROM chemistry_tidy
+        WHERE {col} IS NOT NULL
+        GROUP BY {col} HAVING COUNT(DISTINCT "كود العينة") >= 5
+        ORDER BY {order_col} DESC LIMIT {n}
+        """
+        df = con.execute(sql).df()
+        con.close()
+        if df.empty:
+            return "⚠️ لم أجد بيانات كافية", df
+        response = f"📊 **أعلى {n} {'حسب نسبة المخالفة' if metric == 'rate' else 'حسب عدد المخالفات'}:**\n\n"
+        response += df.to_markdown(index=False)
+        return response, df
+
+    def _handle_category_comparison(
+        self, cat_a: str, cat_b: str, metric: str = "count"
+    ) -> Tuple[str, pd.DataFrame]:
+        """
+        Compare two categories (e.g. spices vs vegetables) on a chosen
+        metric: 'count' (sample counts), 'violations' (violation counts),
+        or 'avg_pesticides' (avg pesticide count per sample).
+        Covers A045, B023, C014.
+        """
+        from modules.mappings import CATEGORY_AR
+        cats = {"a": cat_a, "b": cat_b}
+        rows = []
+        con = self._get_connection()
+        for label, cat_key in cats.items():
+            ar_names = CATEGORY_AR.get(cat_key, [])
+            if not ar_names:
+                continue
+            conditions = [f"\"اسم العينة\" LIKE '%{ar}%'" for ar in ar_names]
+            sample_filter = f"({' OR '.join(conditions)})"
+
+            if metric == "violations":
+                sql = f"""
+                SELECT COUNT(DISTINCT "كود العينة") AS total,
+                       SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) AS violations
+                FROM chemistry_tidy WHERE {sample_filter}
+                """
+            elif metric == "avg_pesticides":
+                sql = f"""
+                WITH counts AS (
+                    SELECT "كود العينة", COUNT(CASE WHEN is_detected=1 THEN 1 END) AS n
+                    FROM chemistry_tidy WHERE {sample_filter}
+                    GROUP BY "كود العينة"
+                )
+                SELECT COUNT(*) AS total, ROUND(AVG(n), 2) AS avg_pesticides FROM counts
+                """
+            else:  # count
+                sql = f"""
+                SELECT COUNT(DISTINCT "كود العينة") AS total FROM chemistry_tidy
+                WHERE {sample_filter}
+                """
+            row = con.execute(sql).fetchone()
+            rows.append({"category": cat_key, "data": row})
+        con.close()
+
+        if len(rows) < 2:
+            return "⚠️ تعذّرت المقارنة — تأكد من صحة اسم الفئتين", pd.DataFrame()
+
+        df = pd.DataFrame(rows)
+        response = f"📊 **مقارنة {cat_a} مقابل {cat_b} ({metric}):**\n\n"
+        for r in rows:
+            response += f"• {r['category']}: {r['data']}\n"
+        return response, df
+    def _handle_missing_mrl_stats(self, want: str) -> Tuple[str, pd.DataFrame]:
+        """
+        Non-compliant samples / residues with no recorded MRL limit_value.
+        want: 'noncompliant_no_mrl' (B032) | 'unevaluable_count' (B033) |
+        'unevaluable_pct' (D035).
+        """
+        con = self._get_connection()
+        if want == "noncompliant_no_mrl":
+            sql = """
+            SELECT "كود العينة" AS sample_code, "اسم العينة" AS sample_name,
+                   pesticide_name AS pesticide, concentration
+            FROM chemistry_tidy
+            WHERE sample_result = 'Non-Compliant'
+              AND (limit_value IS NULL OR limit_value = 0)
+            LIMIT 100
+            """
+            df = con.execute(sql).df()
+            con.close()
+            if df.empty:
+                return "⚠️ لم أجد عينات غير مطابقة بدون حد مسجل", df
+            response = f"📊 **عينات غير مطابقة بدون حد MRL مسجل:**\n\n✅ العدد: **{len(df)}**\n\n"
+            response += df.to_markdown(index=False)
+            return response, df
+
+        sql = """
+        SELECT
+            COUNT(*) AS total_residues,
+            SUM(CASE WHEN limit_value IS NULL OR limit_value = 0 THEN 1 ELSE 0 END) AS unevaluable,
+            ROUND(100.0 * SUM(CASE WHEN limit_value IS NULL OR limit_value = 0 THEN 1 ELSE 0 END)
+                  / COUNT(*), 1) AS unevaluable_pct
+        FROM chemistry_tidy
+        WHERE is_detected = 1
+        """
+        df = con.execute(sql).df()
+        con.close()
+        row = df.iloc[0]
+        if want == "unevaluable_count":
+            response = f"📊 **المتبقيات التي تعذّر تقييمها لعدم وجود حد:**\n\nالعدد: **{int(row['unevaluable'])}**"
+        else:
+            response = (
+                f"📊 **نسبة العينات التي تعذّر تقييمها:**\n\n"
+                f"إجمالي: **{int(row['total_residues'])}** | "
+                f"غير قابلة للتقييم: **{int(row['unevaluable'])}** ({row['unevaluable_pct']}%)"
+            )
+        return response, df
     # ──────────────────────────────────────────────────────────────────────────
     # Average concentration above / below limit
     # ──────────────────────────────────────────────────────────────────────────

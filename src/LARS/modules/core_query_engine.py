@@ -1267,7 +1267,68 @@ class CoreQueryEngine(AdvancedHandlersMixin):
                     n_pesticides = int(all_numbers[-1])
                     if 0 <= n_pesticides <= 50:
                         return self._handle_n_pesticides(n_pesticides, detected_samples, date_filter=detected_period)
-        
+        # Pattern EXCEED_MULT: "N times the limit"
+        mult_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:ضعف|أضعاف|x|times)', query_lower + " " + query)
+        exceed_kws = ['أضعاف الحد', 'ضعف الحد', 'times the limit', 'times the mrl', 'اضعاف', 'ضعف']
+        if mult_match and any(kw in query for kw in exceed_kws):
+            multiplier = float(mult_match.group(1))
+            return self._handle_exceedance_multiplier(detected_samples, multiplier, _detected_category_key)
+
+        # Pattern PROXIMITY: "between X% and Y% of the limit"
+        pct_matches = re.findall(r'(\d+)\s*٪|(\d+)\s*%', query)
+        pct_nums = [int(a or b) for a, b in pct_matches]
+        proximity_kws = ['قريبة من الحد', 'تحت الحد المسموح لكن فوق']
+        if len(pct_nums) >= 1 and any(kw in query for kw in proximity_kws):
+            low, high = (sorted(pct_nums[:2]) if len(pct_nums) >= 2 else (pct_nums[0], 100))
+            return self._handle_limit_proximity_band(detected_samples, low, high)
+
+        # Pattern GLOBAL_RATE: violation % per pesticide/product, no sample filter
+        if 'نسبة المخالفة لكل مبيد' in query:
+            return self._handle_global_violation_rate('pesticide')
+        if 'نسبة المخالفة لكل منتج' in query:
+            return self._handle_global_violation_rate('product')
+
+        # Pattern ZERO_VIOL: entities with zero violations ever
+        if 'ظهرت ولم تسبب أي مخالفة' in query:
+            return self._handle_zero_violations('pesticide')
+        if 'لم تسجل أي مخالفة' in query and ('منتج' in query or 'عينات' in query):
+            return self._handle_zero_violations('product')
+        if 'الخالية من المخالفات' in query and 'حي' in query:
+            return self._handle_zero_violations('neighborhood')
+
+        # Pattern TOP_N: top N products/facilities by rate or count
+        top_n_match = re.search(r'أعلى\s+(\d+)', query)
+        if top_n_match:
+            n = int(top_n_match.group(1))
+            if ('نسبة الرسوب' in query or 'نسبة المخالفة' in query) and 'منتج' in query:
+                return self._handle_top_n_by_metric('product', 'rate', n)
+            if 'عدد المخالفات' in query and 'منتج' in query:
+                return self._handle_top_n_by_metric('product', 'count', n)
+            if 'منشآت' in query or 'منشأة' in query:
+                return self._handle_top_n_by_metric('facility', 'count', n)
+
+        # Pattern CAT_COMPARE: category vs category (count/violations/avg pesticides)
+        cat_compare_pairs = [
+            (('توابل', 'خضراوات'), 'spice', 'vegetable'),
+            (('توابل', 'خضار'), 'spice', 'vegetable'),
+            (('خضراوات', 'فواكه'), 'vegetable', 'fruit'),
+            (('خضار', 'فواكه'), 'vegetable', 'fruit'),
+        ]
+        for (word_a, word_b), cat_a, cat_b in cat_compare_pairs:
+            if word_a in query and word_b in query:
+                metric = "count"
+                if 'مخالف' in query:
+                    metric = "violations"
+                elif 'متوسط' in query and 'مبيد' in query:
+                    metric = "avg_pesticides"
+                return self._handle_category_comparison(cat_a, cat_b, metric)
+        # Pattern MISSING_MRL: data-quality metrics on missing limit_value
+        if 'غير مطابقة' in query and 'حد مسجل' in query:
+            return self._handle_missing_mrl_stats('noncompliant_no_mrl')
+        if 'تعذّر تقييمها' in query and 'عدم وجود حد' in query and 'نسبة' not in query:
+            return self._handle_missing_mrl_stats('unevaluable_count')
+        if 'نسبة العينات' in query and 'تعذّر تقييمها' in query:
+            return self._handle_missing_mrl_stats('unevaluable_pct')
         # Pattern 1B: Violations threshold — "find vegetables with more than 10 violations"
         # Matches: category/sample + (more than | over | above) + number + violation
         violation_threshold_kws_en = [
@@ -1382,7 +1443,9 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             show_separately = any(phrase in query_lower for phrase in ['individually', 'separately', 'for each'])
             return self._handle_neighborhood_pesticides(detected_neighborhoods, show_separately, date_filter=detected_period)
         # Pattern MUNICIPALITY: pesticides/breakdown/comparison by بلدية
-        municipality_match = re.search(r'بلدية\s+([^\s؟?]+(?:\s+[^\s؟?]+)?)', query)
+        municipality_match = re.search(
+            r'بلدية\s+((?:(?!\S*بلدية)[^\s؟?]+)(?:\s+(?:(?!\S*بلدية)[^\s؟?]+)){0,2})', query
+        )
         if municipality_match and 'قارن' not in query and 'مقابل' not in query:
             mun_name = municipality_match.group(1).strip()
             if 'أنواع' in query or 'مفصلة' in query or 'حسب نوع' in query:
@@ -1391,7 +1454,9 @@ class CoreQueryEngine(AdvancedHandlersMixin):
 
         # Pattern MUNICIPALITY_COMPARE: "قارن بلدية X وبلدية Y"
         if ('قارن' in query or 'مقابل' in query) and 'بلدية' in query:
-            mun_matches = re.findall(r'بلدية\s+([^\s؟?]+(?:\s+[^\s؟?]+)?)', query)
+            mun_matches = re.findall(
+                r'بلدية\s+((?:(?!\S*بلدية)[^\s؟?]+)(?:\s+(?:(?!\S*بلدية)[^\s؟?]+)){0,2})', query
+            )
             if len(mun_matches) >= 2:
                 return self._handle_municipality_comparison(mun_matches[0].strip(), mun_matches[1].strip())
 
