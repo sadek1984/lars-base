@@ -700,6 +700,118 @@ class AdvancedHandlersMixin:
         return response, df
 
     # ──────────────────────────────────────────────────────────────────────
+    def _handle_zero_detection_products(self) -> Tuple[str, pd.DataFrame]:
+        con = self._get_connection()
+        sql = """
+        SELECT "اسم العينة" AS sample_type, COUNT(DISTINCT "كود العينة") AS sample_count
+        FROM chemistry_tidy
+        GROUP BY "اسم العينة"
+        HAVING SUM(is_detected) = 0
+        ORDER BY sample_count DESC
+        """
+        df = con.execute(sql).df()
+        con.close()
+        if df.empty:
+            return "⚠️ كل المنتجات سجلت اكتشافاً واحداً على الأقل", df
+        response = f"📊 **منتجات لم تسجل فيها أي اكتشافات:**\n\n✅ العدد: **{len(df)}**\n\n" + df.to_markdown(index=False)
+        return response, df
+    
+    def _handle_kpi_summary(self) -> Tuple[str, pd.DataFrame]:
+        con = self._get_connection()
+        overview = con.execute("""
+            SELECT
+                COUNT(DISTINCT "كود العينة") AS total_samples,
+                COUNT(DISTINCT CASE WHEN sample_result = 'Non-Compliant' THEN "كود العينة" END) AS non_compliant,
+                COUNT(DISTINCT CASE WHEN sample_result = 'Compliant' THEN "كود العينة" END) AS compliant,
+                ROUND(100.0 * COUNT(DISTINCT CASE WHEN sample_result = 'Non-Compliant' THEN "كود العينة" END) /
+                      NULLIF(COUNT(DISTINCT "كود العينة"), 0), 1) AS non_compliant_pct
+            FROM chemistry_tidy
+        """).df().iloc[0]
+
+        top_products = con.execute("""
+            SELECT "اسم العينة" AS product, SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) AS violations
+            FROM chemistry_tidy GROUP BY "اسم العينة" ORDER BY violations DESC LIMIT 5
+        """).df()
+
+        top_neighborhoods = con.execute("""
+            SELECT "الحى" AS neighborhood, SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) AS violations
+            FROM chemistry_tidy WHERE "الحى" IS NOT NULL
+            GROUP BY "الحى" ORDER BY violations DESC LIMIT 5
+        """).df()
+
+        date_range = con.execute("""
+            SELECT MIN(strptime("التاريخ", '%d/%m/%Y')) AS first_date,
+                   MAX(strptime("التاريخ", '%d/%m/%Y')) AS last_date
+            FROM chemistry_tidy
+        """).df().iloc[0]
+        con.close()
+
+        response = "📋 **ملخص المؤشرات الرئيسية (KPI Summary):**\n\n"
+        if pd.notna(date_range["first_date"]):
+            response += f"📅 الفترة: {date_range['first_date']:%d/%m/%Y} إلى {date_range['last_date']:%d/%m/%Y}\n\n"
+        response += f"✅ إجمالي العينات: **{int(overview['total_samples'])}**\n"
+        response += f"🟢 مطابقة: **{int(overview['compliant'])}**\n"
+        response += f"🔴 غير مطابقة: **{int(overview['non_compliant'])}** ({overview['non_compliant_pct']}%)\n\n"
+        response += "### أعلى ٥ منتجات من حيث المخالفات\n\n" + top_products.to_markdown(index=False) + "\n\n"
+        response += "### أعلى ٥ أحياء من حيث المخالفات\n\n" + top_neighborhoods.to_markdown(index=False)
+        return response, overview.to_frame().T
+    
+    def _handle_hri_top_consumed(self, n: int = 3) -> Tuple[str, pd.DataFrame]:
+        try:
+            from modules.pesticide_groups import get_consumption
+        except ImportError:
+            from pesticide_groups import get_consumption
+
+        con = self._get_connection()
+        products = con.execute('SELECT DISTINCT "اسم العينة" FROM chemistry_tidy').df()["اسم العينة"].tolist()
+        con.close()
+
+        ranked = sorted(products, key=lambda p: get_consumption(p) or 0, reverse=True)[:n]
+        text, df = self._handle_health_risk_index(ranked)
+        header = f"📊 **أعلى {n} منتجات استهلاكاً:** {', '.join(ranked)}\n\n"
+        return header + text, df
+    
+    def _handle_avg_pesticides_high_risk_samples(self, threshold: float = 1.0) -> Tuple[str, pd.DataFrame]:
+        try:
+            from modules.pesticide_groups import get_adi, get_consumption, BODY_WEIGHT_KG
+        except ImportError:
+            from pesticide_groups import get_adi, get_consumption, BODY_WEIGHT_KG
+
+        con = self._get_connection()
+        df = con.execute("""
+            SELECT "كود العينة" AS sample_code, "اسم العينة" AS sample_name,
+                   pesticide_name, concentration
+            FROM chemistry_tidy
+            WHERE is_detected = 1 AND pesticide_name NOT IN ('NO DETECTION', 'NO DATA')
+        """).df()
+        con.close()
+        if df.empty:
+            return "⚠️ لم أجد بيانات كافية", df
+
+        def per_row_hri(row):
+            adi = get_adi(row["pesticide_name"])
+            if not adi or adi <= 0:
+                return 0.0
+            consumption_kg = (get_consumption(row["sample_name"]) or 0) / 1000.0
+            return (row["concentration"] * consumption_kg) / (adi * BODY_WEIGHT_KG)
+
+        df["hri"] = df.apply(per_row_hri, axis=1)
+        sample_risk = df.groupby("sample_code").agg(
+            total_hri=("hri", "sum"), pesticide_count=("pesticide_name", "count")
+        ).reset_index()
+
+        high_risk = sample_risk[sample_risk["total_hri"] > threshold]
+        if high_risk.empty:
+            return f"⚠️ لم أجد عينات يتجاوز مؤشر خطرها الإجمالي {threshold}", pd.DataFrame()
+
+        avg_count = high_risk["pesticide_count"].mean().round(2)
+        response = (
+            f"📊 **متوسط عدد المبيدات في العينات ذات مؤشر خطر إجمالي > {threshold}:**\n\n"
+            f"عدد العينات عالية الخطورة: **{len(high_risk)}**\n"
+            f"متوسط عدد المبيدات فيها: **{avg_count}**"
+        )
+        return response, high_risk
+    # ──────────────────────────────────────────────────────────────────────
     # Time-series analysis — ONE shared period-expression builder +
     # ONE breakdown handler + ONE "which period was extreme" handler,
     # reused across D015, D016, D040, D045 (breakdown) and D020 (extreme).

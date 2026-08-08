@@ -118,7 +118,9 @@ cd /Users/a12/lars-base
 PYTHONPATH=/Users/a12/lars-base/src/LARS:/Users/a12/lars-base/src/LARS/modules \
 LARS_DUCKDB_PATH=/Users/a12/lars-base/src/LARS/data/lars_data_test_copy.duckdb \
 uvicorn lars_service:app --host 0.0.0.0 --port 8090
+
 # to run questions_bank with LARS API
+
 python3 -m py_compile /Users/a12/lars-base/src/LARS/modules/advanced_handlers.py
 python3 -m py_compile /Users/a12/lars-base/src/LARS/modules/core_query_engine.py
 python run_question_bank.py questions_bank.csv baseline.csv

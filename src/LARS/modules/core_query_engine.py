@@ -1307,6 +1307,12 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             return self._handle_zero_violations('product')
         if 'الخالية من المخالفات' in query and 'حي' in query:
             return self._handle_zero_violations('neighborhood')
+        if 'لم تسجل فيها أي اكتشافات' in query:
+            return self._handle_zero_detection_products()
+
+        kpi_kws = ['ملخص تنفيذي', 'المؤشرات الرئيسية', 'في صفحة واحدة']
+        if any(kw in query for kw in kpi_kws):
+            return self._handle_kpi_summary()
 
         # Pattern TOP_N: top N products/facilities by rate or count
         top_n_match = re.search(r'أعلى\s+(\d+)', query)
@@ -1548,13 +1554,27 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         
         if stats_keywords_found and detected_pesticide:
             return self._handle_pesticide_stats(detected_pesticide, detected_samples, stats_keywords_found, date_filter=detected_period)
-        
+
         # Pattern HRI: Health Risk Index
         hri_kws_en = [
             'health risk index', 'health risk', 'hri', 'risk index',
             'مؤشر الخطر الصحي', 'مؤشر الخطر', 'المخاطر الصحية',
             'معامل الخطر', 'hq',
         ]
+        if 'أعلى' in query and 'استهلاكاً' in query and any(
+            kw in query_lower for kw in hri_kws_en
+        ):
+            n_match = re.search(r'أعلى\s*(\d+)', query)
+            n = int(n_match.group(1)) if n_match else 3
+            return self._handle_hri_top_consumed(n)
+
+        if 'متوسط عدد المبيدات' in query and ('الحد الآمن' in query or 'الآمن' in query):
+            return self._handle_avg_pesticides_high_risk_samples(1.0)
+
+        if 'أعلى' in query and 'استهلاكاً' in query and any(kw in query_lower for kw in hri_kws_en):
+            n_match = re.search(r'أعلى\s*(\d+)', query)
+            n = int(n_match.group(1)) if n_match else 3
+            return self._handle_hri_top_consumed(n)
         if any(kw in query_lower for kw in hri_kws_en) and detected_samples:
             return self._handle_health_risk_index(detected_samples)
 
@@ -1784,7 +1804,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         # Pattern E033: samples with highest HRI, ranked
         if 'أعلى مؤشر خطر صحي' in query:
             return self._handle_top_hri_samples(detected_samples)
-            
+
 
         return None
 
