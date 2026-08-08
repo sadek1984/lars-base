@@ -1189,6 +1189,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
 
         return response_text, df
 
+   
     def _dispatch_keyword_patterns(
         self, ctx: dict
     ) -> Optional[Tuple[str, Optional[pd.DataFrame]]]:
@@ -1381,7 +1382,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             show_separately = any(phrase in query_lower for phrase in ['individually', 'separately', 'for each'])
             return self._handle_neighborhood_pesticides(detected_neighborhoods, show_separately, date_filter=detected_period)
         # Pattern MUNICIPALITY: pesticides/breakdown/comparison by بلدية
-        municipality_match = re.search(r'بلدية\s+([^\s؟?]+(?:\s+[^\s؟?]+){0,2})', query)
+        municipality_match = re.search(r'بلدية\s+([^\s؟?]+(?:\s+[^\s؟?]+)?)', query)
         if municipality_match and 'قارن' not in query and 'مقابل' not in query:
             mun_name = municipality_match.group(1).strip()
             if 'أنواع' in query or 'مفصلة' in query or 'حسب نوع' in query:
@@ -1390,12 +1391,12 @@ class CoreQueryEngine(AdvancedHandlersMixin):
 
         # Pattern MUNICIPALITY_COMPARE: "قارن بلدية X وبلدية Y"
         if ('قارن' in query or 'مقابل' in query) and 'بلدية' in query:
-            mun_matches = re.findall(r'بلدية\s+([^\s؟?]+(?:\s+[^\s؟?]+){0,2})', query)
+            mun_matches = re.findall(r'بلدية\s+([^\s؟?]+(?:\s+[^\s؟?]+)?)', query)
             if len(mun_matches) >= 2:
                 return self._handle_municipality_comparison(mun_matches[0].strip(), mun_matches[1].strip())
 
         # Pattern MISSING_FIELD: "نسبة السجلات الناقصة في حقل X"
-        if 'ناقصة' in query or 'ناقص' in query:
+        if 'ناقصة' in query or 'ناقص' in query or 'ليس لها' in query:
             if 'حي' in query or 'الحى' in query:
                 return self._handle_missing_field_pct('neighborhood')
             if 'بلدية' in query:

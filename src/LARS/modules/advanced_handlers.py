@@ -376,6 +376,101 @@ class AdvancedHandlersMixin:
         return response, df
 
     # ──────────────────────────────────────────────────────────────────────────
+    # Municipality pesticides (A053)
+    # ──────────────────────────────────────────────────────────────────────────
+    def _handle_municipality_pesticides(self, municipality: str) -> Tuple[str, pd.DataFrame]:
+        """Pesticides detected within a given municipality. Covers A053."""
+        con = self._get_connection()
+        sql = f"""
+        SELECT
+            pesticide_name AS pesticide,
+            COUNT(*) AS detections,
+            SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) AS violations
+        FROM chemistry_tidy
+        WHERE is_detected = 1
+          AND pesticide_name NOT IN ('NO DETECTION', 'NO DATA')
+          AND "اسم البلدية" LIKE '%{municipality}%'
+        GROUP BY pesticide_name
+        ORDER BY detections DESC
+        LIMIT 50
+        """
+        df = con.execute(sql).df()
+        con.close()
+        if df.empty:
+            return f"⚠️ لم أجد بيانات لبلدية {municipality}", df
+        response = f"🏛️ **المبيدات في بلدية {municipality}:**\n\n"
+        response += df.to_markdown(index=False)
+        return response, df
+
+    def _handle_municipality_comparison(self, mun_a: str, mun_b: str) -> Tuple[str, pd.DataFrame]:
+        """Compare violation rate between two municipalities. Covers A054, D012."""
+        con = self._get_connection()
+        sql = f"""
+        SELECT
+            "اسم البلدية" AS municipality,
+            COUNT(DISTINCT "كود العينة") AS total_samples,
+            SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) AS violations,
+            ROUND(100.0 * SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) /
+                  NULLIF(COUNT(DISTINCT "كود العينة"), 0), 1) AS violation_rate_pct
+        FROM chemistry_tidy
+        WHERE "اسم البلدية" IN ('{mun_a}', '{mun_b}')
+        GROUP BY "اسم البلدية"
+        """
+        df = con.execute(sql).df()
+        con.close()
+        if df.empty:
+            return f"⚠️ لم أجد بيانات للمقارنة بين {mun_a} و{mun_b}", df
+        response = f"📊 **مقارنة {mun_a} و{mun_b}:**\n\n"
+        response += df.to_markdown(index=False)
+        return response, df
+
+    def _handle_municipality_breakdown(self, municipality: str) -> Tuple[str, pd.DataFrame]:
+        """Sample counts per product type within a municipality. Covers A055."""
+        con = self._get_connection()
+        sql = f"""
+        SELECT
+            "اسم العينة" AS sample_type,
+            COUNT(DISTINCT "كود العينة") AS sample_count
+        FROM chemistry_tidy
+        WHERE "اسم البلدية" LIKE '%{municipality}%'
+        GROUP BY "اسم العينة"
+        ORDER BY sample_count DESC
+        """
+        df = con.execute(sql).df()
+        con.close()
+        if df.empty:
+            return f"⚠️ لم أجد بيانات لبلدية {municipality}", df
+        response = f"📊 **توزيع العينات حسب النوع — بلدية {municipality}:**\n\n"
+        response += df.to_markdown(index=False)
+        return response, df
+
+    def _handle_missing_field_pct(self, field: str) -> Tuple[str, pd.DataFrame]:
+        """% of records missing a given field (الحى or اسم البلدية). Covers D035-D037."""
+        col_map = {"neighborhood": '"الحى"', "municipality": '"اسم البلدية"'}
+        col = col_map.get(field)
+        if not col:
+            return "⚠️ حقل غير معروف", pd.DataFrame()
+        con = self._get_connection()
+        sql = f"""
+        SELECT
+            COUNT(*) AS total,
+            SUM(CASE WHEN {col} IS NULL OR {col} = '' THEN 1 ELSE 0 END) AS missing,
+            ROUND(100.0 * SUM(CASE WHEN {col} IS NULL OR {col} = '' THEN 1 ELSE 0 END) / COUNT(*), 1) AS missing_pct
+        FROM chemistry_tidy
+        """
+        df = con.execute(sql).df()
+        con.close()
+        row = df.iloc[0]
+        label = "الحى" if field == "neighborhood" else "البلدية"
+        response = (
+            f"📊 **نسبة السجلات الناقصة في حقل {label}:**\n\n"
+            f"إجمالي السجلات: **{int(row['total'])}**\n"
+            f"سجلات ناقصة: **{int(row['missing'])}** ({row['missing_pct']}%)"
+        )
+        return response, df
+
+
+    # ──────────────────────────────────────────────────────────────────────────
     # Average concentration above / below limit
     # ──────────────────────────────────────────────────────────────────────────
     def _handle_avg_concentration_limit(
