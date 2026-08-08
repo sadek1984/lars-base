@@ -967,50 +967,46 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             'category_key': category_key,
         }
 
-    def _handle_out_of_scope(self, reason_type: str, detail: str = "") -> str:
+    def _handle_out_of_scope(self, reason_type: str, detail_ar: str = "", detail_en: str = "") -> str:
         """
-        Returns a bilingual, honest 'can't answer as posed' response for
-        genuinely out-of-scope requests, instead of the generic
-        _handle_unknown_query fallback. reason_type controls which
-        template is used — see the four branches below.
+        Returns a language-consistent 'can't answer as posed' response.
+        Detects Arabic vs English from the query text itself (via presence
+        of Arabic script) and returns ONLY that language — no mixing.
+        Callers should pass both detail_ar and detail_en when the detail
+        differs by language; if only one is given, it's used as a fallback
+        for both (acceptable for short technical terms like pesticide names
+        that don't need translation).
         """
-        if reason_type == "subjective_recommendation":
-            return (
-                "⚠️ **لا يمكنني اقتراح توصيات أو أولويات — هذا يتطلب حكماً بشرياً "
-                "بناءً على السياق التشغيلي.**\n\n"
-                "يمكنني عرض البيانات التي قد تُبنى عليها هذه القرارات، مثل: "
-                "أعلى المنتجات من حيث نسبة المخالفة، أو الأحياء الأكثر مخالفة.\n\n"
-                "*I can't generate recommendations or priorities — that requires "
+        is_arabic = any('\u0600' <= c <= '\u06ff' for c in getattr(self, "_last_query", ""))
+        detail_en = detail_en or detail_ar
+        detail_ar = detail_ar or detail_en
+
+        templates_ar = {
+            "subjective_recommendation": (
+                "⚠️ لا يمكنني اقتراح توصيات أو أولويات — هذا يتطلب حكماً بشرياً "
+                "بناءً على السياق التشغيلي. يمكنني عرض البيانات التي قد تُبنى عليها "
+                "هذه القرارات، مثل: أعلى المنتجات من حيث نسبة المخالفة، أو الأحياء "
+                "الأكثر مخالفة."
+            ),
+            "data_not_tracked": f"⚠️ لا تحتوي قاعدة البيانات على {detail_ar}. هذا النوع من البيانات غير مُسجَّل في النظام الحالي.",
+            "needs_method_definition": f"⚠️ هذا السؤال يحتاج إلى تعريف منهجية محددة قبل الإجابة عليه ({detail_ar}). هذا قيد المراجعة حالياً وليس متاحاً بعد.",
+            "too_compound": "⚠️ هذا السؤال يجمع عدة أجزاء معاً. جرّب تقسيمه إلى أسئلة أصغر — مثلاً اسأل أولاً عن قائمة المبيدات في العينة، ثم عن نسبة المخالفات لكل مبيد على حده.",
+        }
+        templates_en = {
+            "subjective_recommendation": (
+                "I can't generate recommendations or priorities — that requires "
                 "operational judgment. I can show the underlying data instead, "
                 "like top products by violation rate, or the most non-compliant "
-                "neighborhoods.*"
-            )
-        elif reason_type == "data_not_tracked":
-            return (
-                f"⚠️ **لا تحتوي قاعدة البيانات على {detail}.**\n"
-                "هذا النوع من البيانات غير مُسجَّل في النظام الحالي.\n\n"
-                f"*This data isn't tracked in the current system — there's no "
-                f"{detail} field in the dataset.*"
-            )
-        elif reason_type == "needs_method_definition":
-            return (
-                f"⚠️ **هذا السؤال يحتاج إلى تعريف منهجية محددة قبل الإجابة عليه** "
-                f"({detail}).\n"
-                "هذا قيد المراجعة حالياً وليس متاحاً بعد.\n\n"
-                f"*This needs a defined method before it can be answered ({detail}). "
-                f"Not available yet — flagged for review.*"
-            )
-        elif reason_type == "too_compound":
-            return (
-                "⚠️ **هذا السؤال يجمع عدة أجزاء معاً.** جرّب تقسيمه إلى أسئلة أصغر — "
-                "مثلاً اسأل أولاً عن قائمة المبيدات في العينة، ثم عن نسبة المخالفات "
-                "لكل مبيد على حده.\n\n"
-                "*This combines several sub-questions — try splitting it, e.g. ask "
-                "for the pesticide list first, then the violation rate per "
-                "pesticide separately.*"
-            )
-        # Fallback (shouldn't normally be hit if callers pass a known reason_type)
-        return self._handle_unknown_query("")
+                "neighborhoods."
+            ),
+            "data_not_tracked": f"This data isn't tracked in the current system — there's no {detail_en} field in the dataset.",
+            "needs_method_definition": f"This needs a defined method before it can be answered ({detail_en}). Not available yet — flagged for review.",
+            "too_compound": "This combines several sub-questions — try splitting it, e.g. ask for the pesticide list first, then the violation rate per pesticide separately.",
+        }
+
+        if is_arabic:
+            return templates_ar.get(reason_type, self._handle_unknown_query(""))
+        return templates_en.get(reason_type, self._handle_unknown_query(""))
 
     def _check_out_of_scope(self, query: str, query_lower: str) -> Optional[Tuple[str, Optional[pd.DataFrame]]]:
         """
@@ -1032,8 +1028,11 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         capacity_kws = ['الطاقة الاستيعابية', 'اختناق', 'bottleneck', 'capacity']
         if any(kw in query_lower or kw in query for kw in capacity_kws):
             return self._handle_out_of_scope(
-                "data_not_tracked", "بيانات الطاقة الاستيعابية أو معدل الإنتاجية للمختبر"
+                "data_not_tracked",
+                detail_ar="بيانات الطاقة الاستيعابية أو معدل الإنتاجية للمختبر",
+                detail_en="lab capacity or throughput data",
             ), None
+        
 
         # Mechanism-of-action — confirmed pesticide_groups.py has no MOA
         # data, only classify_pesticide() at the chemical-group level.
@@ -1046,26 +1045,40 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         if any(kw in query for kw in moa_kws):
             return self._handle_out_of_scope(
                 "needs_method_definition",
-                "البيانات الحالية تصنّف حسب المجموعة الكيميائية فقط، وليس آلية السمّية على مستوى أدق",
+                detail_ar="البيانات الحالية تصنّف حسب المجموعة الكيميائية فقط، وليس آلية السمّية على مستوى أدق",
+                detail_en="current data only classifies by chemical group, not mechanism of toxicity at a finer level",
             ), None
 
-        undefined_method_kws = {
+        undefined_method_kws_ar = {
             'موسمي': "كيف يُعرَّف 'الموسمي'",
             'قيمة شاذة': "كيف تُعرَّف 'القيمة الشاذة' — IQR أم z-score",
             'القيم الشاذة': "كيف تُعرَّف 'القيمة الشاذة' — IQR أم z-score",
-            'outlier': "how 'outlier' is defined — IQR or z-score",
+            'outlier': "كيف تُعرَّف 'القيمة الشاذة' — IQR أم z-score",
             'علاقة بين': "طريقة حساب الارتباط الإحصائي (معامل بيرسون مثلاً)",
+            'correlation': "طريقة حساب الارتباط الإحصائي (معامل بيرسون مثلاً)",
+        }
+        undefined_method_kws_en = {
+            'موسمي': "how 'seasonal' is defined",
+            'قيمة شاذة': "how 'outlier' is defined — IQR or z-score",
+            'القيم الشاذة': "how 'outlier' is defined — IQR or z-score",
+            'outlier': "how 'outlier' is defined — IQR or z-score",
+            'علاقة بين': "the correlation method (e.g. Pearson's r)",
             'correlation': "the correlation method (e.g. Pearson's r)",
         }
-        for kw, detail in undefined_method_kws.items():
+        for kw in undefined_method_kws_ar:
             if kw in query_lower or kw in query:
-                return self._handle_out_of_scope("needs_method_definition", detail), None
+                return self._handle_out_of_scope(
+                    "needs_method_definition",
+                    detail_ar=undefined_method_kws_ar[kw],
+                    detail_en=undefined_method_kws_en[kw],
+                ), None
 
         risk_category_kws = ['الفئات الغذائية الأعلى خطورة', 'أعلى خطورة']
         if any(kw in query for kw in risk_category_kws):
             return self._handle_out_of_scope(
                 "needs_method_definition",
-                "يحتاج مؤشر الخطر الصحي (HRI) لكل فئة أولاً، ثم تحديد حد أدنى للخطورة",
+                detail_ar="يحتاج مؤشر الخطر الصحي (HRI) لكل فئة أولاً، ثم تحديد حد أدنى للخطورة",
+                detail_en="needs the Health Risk Index (HRI) computed per category first, then a defined risk threshold",
             ), None
 
         compound_kws = ['من حيث العدد وتركيز', 'وكم منها متسبب']
@@ -1099,6 +1112,8 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         period_label          = ctx['detected_period_label']
 
         result: Optional[Tuple[str, Optional[pd.DataFrame]]] = None
+
+        self._last_query = query  # for _handle_out_of_scope's language detection
 
         # ── Tier -1: Out-of-scope gate — runs BEFORE any tier, including
         # Tier 2's intent router, so a superficial keyword match deep inside
@@ -1365,7 +1380,27 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         if detected_neighborhoods and ('pesticide' in query_lower or 'pesticides' in query_lower):
             show_separately = any(phrase in query_lower for phrase in ['individually', 'separately', 'for each'])
             return self._handle_neighborhood_pesticides(detected_neighborhoods, show_separately, date_filter=detected_period)
-        
+        # Pattern MUNICIPALITY: pesticides/breakdown/comparison by بلدية
+        municipality_match = re.search(r'بلدية\s+([^\s؟?]+(?:\s+[^\s؟?]+){0,2})', query)
+        if municipality_match and 'قارن' not in query and 'مقابل' not in query:
+            mun_name = municipality_match.group(1).strip()
+            if 'أنواع' in query or 'مفصلة' in query or 'حسب نوع' in query:
+                return self._handle_municipality_breakdown(mun_name)
+            return self._handle_municipality_pesticides(mun_name)
+
+        # Pattern MUNICIPALITY_COMPARE: "قارن بلدية X وبلدية Y"
+        if ('قارن' in query or 'مقابل' in query) and 'بلدية' in query:
+            mun_matches = re.findall(r'بلدية\s+([^\s؟?]+(?:\s+[^\s؟?]+){0,2})', query)
+            if len(mun_matches) >= 2:
+                return self._handle_municipality_comparison(mun_matches[0].strip(), mun_matches[1].strip())
+
+        # Pattern MISSING_FIELD: "نسبة السجلات الناقصة في حقل X"
+        if 'ناقصة' in query or 'ناقص' in query:
+            if 'حي' in query or 'الحى' in query:
+                return self._handle_missing_field_pct('neighborhood')
+            if 'بلدية' in query:
+                return self._handle_missing_field_pct('municipality')
+
         # Pattern 5: Find samples containing pesticide
         # "tomato samples containing bifenthrin"
         if detected_pesticide and detected_samples:
