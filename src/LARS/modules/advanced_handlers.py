@@ -53,7 +53,7 @@ class AdvancedHandlersMixin:
         con = self._get_connection()
 
         sample_conditions = [f"\"اسم العينة\" LIKE '%{s}%'" for s in samples]
-        sample_filter = f"({' OR '.join(sample_conditions)})"
+        sample_filter = f"({' OR '.join(sample_conditions)})" if sample_conditions else "1=1"
 
         sql = f"""
         SELECT
@@ -931,7 +931,245 @@ class AdvancedHandlersMixin:
 
         response = "📊 **توزيع المجموعات الكيميائية عبر الأحياء:**\n\n" + pivot.head(60).to_markdown(index=False)
         return response, pivot
+    # ──────────────────────────────────────────────────────────────────────
+    # A040 — pesticides that NEVER appeared in a given category
+    # ──────────────────────────────────────────────────────────────────────
+    def _handle_never_detected_in_category(self, category_key: str) -> Tuple[str, pd.DataFrame]:
+        con = self._get_connection()
+        conditions = [f"\"اسم العينة\" LIKE '%{ar}%'" for ar in CATEGORY_AR.get(category_key, [])]
+        if not conditions:
+            return f"⚠️ فئة غير معروفة: {category_key}", pd.DataFrame()
+        sample_filter = f"({' OR '.join(conditions)})"
 
+        all_pesticides = set(con.execute(
+            "SELECT DISTINCT pesticide_name FROM chemistry_tidy WHERE pesticide_name NOT IN ('NO DETECTION','NO DATA')"
+        ).df()["pesticide_name"])
+        detected_in_cat = set(con.execute(f"""
+            SELECT DISTINCT pesticide_name FROM chemistry_tidy
+            WHERE is_detected = 1 AND {sample_filter}
+        """).df()["pesticide_name"])
+        con.close()
+
+        never = sorted(all_pesticides - detected_in_cat)
+        label = {"vegetable": "الخضار", "fruit": "الفواكه", "spice": "التوابل",
+                  "nut": "المكسرات", "grain": "الحبوب", "leafy": "الورقيات"}.get(category_key, category_key)
+        if not never:
+            return f"⚠️ كل المبيدات المسجّلة ظهرت في {label} على الأقل مرة واحدة", pd.DataFrame()
+        df = pd.DataFrame({"pesticide": never})
+        response = f"📊 **مبيدات لم تظهر إطلاقاً في {label}:**\n\n✅ العدد: **{len(never)}**\n\n" + df.to_markdown(index=False)
+        return response, df
+
+    # ──────────────────────────────────────────────────────────────────────
+    # B036 — sample_result vs is_above_limit disagreement count
+    # ──────────────────────────────────────────────────────────────────────
+    def _handle_compliance_column_diff(self) -> Tuple[str, pd.DataFrame]:
+        con = self._get_connection()
+        sql = """
+        SELECT
+            (SELECT COUNT(DISTINCT "كود العينة") FROM chemistry_tidy WHERE sample_result = 'Non-Compliant') AS by_classification,
+            (SELECT COUNT(DISTINCT "كود العينة") FROM chemistry_tidy WHERE is_above_limit = 1) AS by_calculation
+        """
+        row = con.execute(sql).df().iloc[0]
+        con.close()
+        diff = abs(int(row["by_classification"]) - int(row["by_calculation"]))
+        response = (
+            f"📊 **مقارنة عدد المخالفات: حسب التصنيف الرسمي مقابل الحساب الفني:**\n\n"
+            f"حسب التصنيف الرسمي (sample_result): **{int(row['by_classification'])}**\n"
+            f"حسب الحساب الفني (is_above_limit): **{int(row['by_calculation'])}**\n"
+            f"الفرق: **{diff}**\n\n"
+            f"*ملاحظة: الفرق متوقع — عينة قد تتجاوز الحد فنياً لمبيد واحد لكن يقرر "
+            f"الكيميائي مطابقتها الإجمالية بناءً على معايير أخرى، والعكس صحيح.*"
+        )
+        return response, row.to_frame().T
+
+    # ──────────────────────────────────────────────────────────────────────
+    # B045 — total violation count, optional date filter, no sample filter
+    # ──────────────────────────────────────────────────────────────────────
+    def _handle_total_violations(self, date_filter: Optional[str] = None) -> Tuple[str, pd.DataFrame]:
+        con = self._get_connection()
+        date_clause = date_filter or ""
+        sql = f"""
+        SELECT COUNT(*) AS total_violations
+        FROM chemistry_tidy
+        WHERE is_above_limit = 1 {date_clause}
+        """
+        row = con.execute(sql).df().iloc[0]
+        con.close()
+        response = f"📊 **إجمالي المخالفات:** **{int(row['total_violations'])}**"
+        return response, row.to_frame().T
+
+    # ──────────────────────────────────────────────────────────────────────
+    # B047 — facilities exceeding a violation-count threshold
+    # ──────────────────────────────────────────────────────────────────────
+    def _handle_facility_violation_threshold(self, threshold: int) -> Tuple[str, pd.DataFrame]:
+        con = self._get_connection()
+        sql = f"""
+        SELECT "اسم المنشاة" AS facility, COUNT(*) AS violations
+        FROM chemistry_tidy
+        WHERE is_above_limit = 1 AND "اسم المنشاة" IS NOT NULL
+        GROUP BY "اسم المنشاة"
+        HAVING COUNT(*) > {threshold}
+        ORDER BY violations DESC
+        """
+        df = con.execute(sql).df()
+        con.close()
+        if df.empty:
+            return f"⚠️ لم أجد منشآت تكررت مخالفاتها أكثر من {threshold} مرات", df
+        response = f"📊 **منشآت تكررت مخالفاتها أكثر من {threshold} مرات:**\n\n✅ العدد: **{len(df)}**\n\n" + df.to_markdown(index=False)
+        return response, df
+
+    # ──────────────────────────────────────────────────────────────────────
+    # B049 — category failure rate vs overall average
+    # ──────────────────────────────────────────────────────────────────────
+    def _handle_category_vs_overall_rate(self, category_key: str) -> Tuple[str, pd.DataFrame]:
+        con = self._get_connection()
+        conditions = [f"\"اسم العينة\" LIKE '%{ar}%'" for ar in CATEGORY_AR.get(category_key, [])]
+        cat_filter = f"({' OR '.join(conditions)})" if conditions else "1=1"
+        sql = f"""
+        SELECT
+            (SELECT ROUND(100.0 * SUM(CASE WHEN is_above_limit=1 THEN 1 ELSE 0 END) /
+                  NULLIF(COUNT(DISTINCT "كود العينة"),0), 1)
+             FROM chemistry_tidy WHERE {cat_filter}) AS category_rate,
+            (SELECT ROUND(100.0 * SUM(CASE WHEN is_above_limit=1 THEN 1 ELSE 0 END) /
+                  NULLIF(COUNT(DISTINCT "كود العينة"),0), 1)
+             FROM chemistry_tidy) AS overall_rate
+        """
+        row = con.execute(sql).df().iloc[0]
+        con.close()
+        label = {"vegetable": "الخضار", "fruit": "الفواكه", "spice": "التوابل",
+                  "nut": "المكسرات", "grain": "الحبوب", "leafy": "الورقيات"}.get(category_key, category_key)
+        response = (
+            f"📊 **نسبة الرسوب — {label} مقابل المعدل العام:**\n\n"
+            f"نسبة {label}: **{row['category_rate']}%**\n"
+            f"المعدل العام: **{row['overall_rate']}%**"
+        )
+        return response, row.to_frame().T
+
+    # ──────────────────────────────────────────────────────────────────────
+    # C020 / C022 — chemical-group violation ranking & rate
+    # Shared helper reused by both — NOT reused by C027/C030 (already
+    # verified working) to avoid touching passing code.
+    # ──────────────────────────────────────────────────────────────────────
+    def _get_classified_detections(self) -> pd.DataFrame:
+        try:
+            from modules.pesticide_groups import classify_pesticide
+        except ImportError:
+            from pesticide_groups import classify_pesticide
+        con = self._get_connection()
+        df = con.execute("""
+            SELECT pesticide_name, is_above_limit
+            FROM chemistry_tidy
+            WHERE is_detected = 1 AND pesticide_name NOT IN ('NO DETECTION', 'NO DATA')
+        """).df()
+        con.close()
+        df["chemical_group"] = df["pesticide_name"].apply(classify_pesticide)
+        return df
+
+    def _handle_chemical_group_top_violator(self) -> Tuple[str, pd.DataFrame]:
+        """Which chemical group causes the most violations. C020."""
+        df = self._get_classified_detections()
+        if df.empty:
+            return "⚠️ لم أجد بيانات كافية", df
+        summary = df.groupby("chemical_group")["is_above_limit"].sum().sort_values(ascending=False).reset_index()
+        summary.columns = ["chemical_group", "violations"]
+        top = summary.iloc[0]
+        response = (
+            f"📊 **المجموعة الكيميائية الأكثر تسبباً في المخالفات:**\n\n"
+            f"**{top['chemical_group']}** — {int(top['violations'])} مخالفة\n\n"
+        ) + summary.to_markdown(index=False)
+        return response, summary
+
+    def _handle_chemical_group_rates(self) -> Tuple[str, pd.DataFrame]:
+        """Violation % per chemical group. C022."""
+        df = self._get_classified_detections()
+        if df.empty:
+            return "⚠️ لم أجد بيانات كافية", df
+        summary = df.groupby("chemical_group").agg(
+            detections=("pesticide_name", "count"), violations=("is_above_limit", "sum")
+        ).reset_index()
+        summary["violation_rate_pct"] = (100.0 * summary["violations"] / summary["detections"]).round(1)
+        summary = summary.sort_values("violation_rate_pct", ascending=False)
+        response = "📊 **نسبة المخالفة لكل مجموعة كيميائية:**\n\n" + summary.to_markdown(index=False)
+        return response, summary
+
+    # ──────────────────────────────────────────────────────────────────────
+    # E011 — per-row %MRL for every residue in a sample type
+    # ──────────────────────────────────────────────────────────────────────
+    def _handle_mrl_pct_per_residue(self, samples: List[str]) -> Tuple[str, pd.DataFrame]:
+        con = self._get_connection()
+        sample_filter = self._build_sample_filter(samples) if samples else "1=1"
+        sql = f"""
+        SELECT "كود العينة" AS sample_code, pesticide_name AS pesticide,
+               concentration, limit_value AS mrl,
+               ROUND(exceedance_ratio * 100, 1) AS pct_mrl
+        FROM chemistry_tidy
+        WHERE is_detected = 1 AND limit_value > 0 AND {sample_filter}
+        ORDER BY pct_mrl DESC LIMIT 100
+        """
+        df = con.execute(sql).df()
+        con.close()
+        label = " + ".join(samples) if samples else "جميع العينات"
+        if df.empty:
+            return f"⚠️ لم أجد بيانات كافية لـ {label}", df
+        response = f"📊 **نسبة %MRL لكل متبقي — {label}:**\n\n" + df.to_markdown(index=False)
+        return response, df
+
+    # ──────────────────────────────────────────────────────────────────────
+    # E012 — average %MRL per product (global)
+    # ──────────────────────────────────────────────────────────────────────
+    def _handle_avg_mrl_pct_per_product(self) -> Tuple[str, pd.DataFrame]:
+        con = self._get_connection()
+        sql = """
+        SELECT "اسم العينة" AS sample_type,
+               ROUND(AVG(exceedance_ratio * 100), 1) AS avg_pct_mrl
+        FROM chemistry_tidy
+        WHERE is_detected = 1 AND limit_value > 0
+        GROUP BY "اسم العينة" ORDER BY avg_pct_mrl DESC
+        """
+        df = con.execute(sql).df()
+        con.close()
+        if df.empty:
+            return "⚠️ لم أجد بيانات كافية", df
+        response = "📊 **متوسط نسبة %MRL لكل منتج:**\n\n" + df.to_markdown(index=False)
+        return response, df
+
+    # ──────────────────────────────────────────────────────────────────────
+    # E030 — Quality Index averaged per product (global)
+    # ──────────────────────────────────────────────────────────────────────
+    def _handle_quality_index_by_product(self) -> Tuple[str, pd.DataFrame]:
+        con = self._get_connection()
+        sql = """
+        WITH qi_calc AS (
+            SELECT "كود العينة", "اسم العينة" AS sample_name,
+                   SUM(CASE WHEN limit_value > 0 THEN concentration / limit_value ELSE 0 END) AS quality_index
+            FROM chemistry_tidy
+            WHERE is_detected = 1 AND pesticide_name NOT IN ('NO DETECTION', 'NO DATA')
+            GROUP BY "كود العينة", "اسم العينة"
+        )
+        SELECT sample_name AS sample_type, ROUND(AVG(quality_index), 3) AS avg_quality_index
+        FROM qi_calc GROUP BY sample_name ORDER BY avg_quality_index DESC
+        """
+        df = con.execute(sql).df()
+        con.close()
+        if df.empty:
+            return "⚠️ لم أجد بيانات كافية", df
+        response = "📊 **متوسط مؤشر الجودة (QI) لكل منتج:**\n\n" + df.to_markdown(index=False)
+        return response, df
+
+    # ──────────────────────────────────────────────────────────────────────
+    # E033 — samples with the highest HRI, ranked
+    # ──────────────────────────────────────────────────────────────────────
+    def _handle_top_hri_samples(self, samples: List[str], n: int = 10) -> Tuple[str, pd.DataFrame]:
+        text, df = self._handle_health_risk_index(samples)
+        if df.empty or "HRI (أعلى)" not in df.columns:
+            return text, df
+        numeric = df[pd.to_numeric(df["HRI (أعلى)"], errors="coerce").notna()].copy()
+        numeric["HRI (أعلى)"] = pd.to_numeric(numeric["HRI (أعلى)"])
+        top = numeric.sort_values("HRI (أعلى)", ascending=False).head(n)
+        if top.empty:
+            return "⚠️ لم أجد بيانات HRI رقمية كافية للترتيب", df
+        response = f"📊 **أعلى {len(top)} عينات من حيث مؤشر الخطر الصحي:**\n\n" + top.to_markdown(index=False)
+        return response, top
     # ──────────────────────────────────────────────────────────────────────────
     # Average concentration above / below limit
     # ──────────────────────────────────────────────────────────────────────────
@@ -1000,7 +1238,7 @@ class AdvancedHandlersMixin:
         con = self._get_connection()
 
         sample_conditions = [f"\"اسم العينة\" LIKE '%{s}%'" for s in samples]
-        sample_filter = f"({' OR '.join(sample_conditions)})"
+        sample_filter = f"({' OR '.join(sample_conditions)})" if sample_conditions else "1=1"
 
         # Part 1: unique non-compliant sample codes
         unique_sql = f"""

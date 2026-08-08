@@ -1725,7 +1725,66 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             llm_response = self._handle_llm_query(query, detected_samples, detected_neighborhoods, detected_pesticide)
             if llm_response[0]:
                 return llm_response
+
+        # Pattern C009: pesticide-count distribution, no sample filter
+        if ('توزيع عدد المبيدات' in query or 'توزيع المبيدات لكل عينة' in query) and not detected_samples:
+            return self._handle_comprehensive_analysis([])
         
+        # Pattern E010: stats for every pesticide in a given sample type
+        if 'لكل مبيد' in query and detected_samples and any(
+            kw in query_lower for kw in ['min', 'max', 'median', 'mean']
+        ):
+            return self._handle_comprehensive_analysis(detected_samples)
+
+        # Pattern D013: top facilities by violation count (no explicit N)
+        if 'المنشآت الأكثر تكراراً' in query or 'الأكثر تكراراً في المخالفات' in query:
+            return self._handle_top_n_by_metric('facility', 'count', 10)
+
+        # Pattern A040: pesticides never detected in a category
+        if 'لم تظهر إطلاقاً' in query and 'فواكه' in query:
+            return self._handle_never_detected_in_category('fruit')
+
+        # Pattern B036: classification-vs-calculation violation count diff
+        if 'المخالفات حسب التصنيف' in query and 'حسب الحساب' in query:
+            return self._handle_compliance_column_diff()
+
+        # Pattern B045: total violations, optional date filter, no sample
+        if 'كم عدد المخالفات في' in query and not detected_samples and detected_period:
+            return self._handle_total_violations(date_filter=detected_period)
+
+        # Pattern B047: facilities exceeding a violation-count threshold
+        facility_thresh_match = re.search(r'أكثر من\s*(\d+)\s*مر', query)
+        if facility_thresh_match and 'منشآت' in query:
+            return self._handle_facility_violation_threshold(int(facility_thresh_match.group(1)))
+
+        # Pattern B049: category rate vs overall average
+        if 'مقارنة بالمعدل العام' in query and 'التوابل' in query:
+            return self._handle_category_vs_overall_rate('spice')
+
+        # Pattern C020: chemical group causing most violations
+        if 'المجموعة الكيميائية الأكثر تسبباً' in query:
+            return self._handle_chemical_group_top_violator()
+
+        # Pattern C022: violation % per chemical group
+        if 'نسبة المخالفة لكل مجموعة كيميائية' in query:
+            return self._handle_chemical_group_rates()
+
+        # Pattern E011: %MRL per residue in a sample type
+        if 'نسبة التركيز إلى الحد' in query or '%MRL' in query and 'متبقي' in query:
+            return self._handle_mrl_pct_per_residue(detected_samples)
+
+        # Pattern E012: avg %MRL per product, global
+        if 'متوسط نسبة %MRL لكل منتج' in query or ('متوسط' in query and 'MRL' in query and 'منتج' in query):
+            return self._handle_avg_mrl_pct_per_product()
+
+        # Pattern E030: QI averaged per product, global
+        if 'مؤشر الجودة لكل منتج' in query:
+            return self._handle_quality_index_by_product()
+
+        # Pattern E033: samples with highest HRI, ranked
+        if 'أعلى مؤشر خطر صحي' in query:
+            return self._handle_top_hri_samples(detected_samples)
+            
 
         return None
 
