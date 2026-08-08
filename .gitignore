@@ -41,3 +41,4 @@ src/LARS/scripts/eu_mrl_data/
 # one-shot patch artifacts
 *.bak_poisoning
 .DS_Store
+.DS_Store
