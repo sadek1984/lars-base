@@ -698,6 +698,240 @@ class AdvancedHandlersMixin:
                 f"غير قابلة للتقييم: **{int(row['unevaluable'])}** ({row['unevaluable_pct']}%)"
             )
         return response, df
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Time-series analysis — ONE shared period-expression builder +
+    # ONE breakdown handler + ONE "which period was extreme" handler,
+    # reused across D015, D016, D040, D045 (breakdown) and D020 (extreme).
+    # A full period-by-period table inherently lets the reader compare
+    # any two periods, so D016 ("Q1 vs Q2") and D045 ("H1 vs H2") don't
+    # need their own separate comparison logic — they just request a
+    # different granularity of the same breakdown.
+    # ──────────────────────────────────────────────────────────────────────
+
+    _TIME_PERIOD_LABELS = {
+        "week": "أسبوعياً", "month": "شهرياً",
+        "quarter": "ربع سنوي", "half": "نصف سنوي",
+    }
+
+    def _period_expr(self, granularity: str) -> str:
+        """SQL expression producing a sortable period label for the given granularity."""
+        date_expr = "strptime(\"التاريخ\", '%d/%m/%Y')"
+        if granularity == "week":
+            return f"strftime(date_trunc('week', {date_expr}), '%Y-%m-%d')"
+        if granularity == "month":
+            return f"strftime({date_expr}, '%Y-%m')"
+        if granularity == "quarter":
+            return (
+                f"CONCAT(CAST(date_part('year', {date_expr}) AS VARCHAR), "
+                f"'-Q', CAST(date_part('quarter', {date_expr}) AS VARCHAR))"
+            )
+        if granularity == "half":
+            return (
+                f"CONCAT(CAST(date_part('year', {date_expr}) AS VARCHAR), '-H', "
+                f"CASE WHEN date_part('month', {date_expr}) <= 6 THEN '1' ELSE '2' END)"
+            )
+        raise ValueError(f"unknown time granularity: {granularity}")
+
+    def _handle_time_series_breakdown(self, granularity: str) -> Tuple[str, pd.DataFrame]:
+        """
+        Sample count + violation rate per period. Covers D015 (month),
+        D040 (week), D016 (quarter — shows all quarters, reader compares
+        Q1 vs Q2 directly from the table), D045 (half — same idea).
+        """
+        period_expr = self._period_expr(granularity)
+        con = self._get_connection()
+        sql = f"""
+        SELECT
+            {period_expr} AS period,
+            COUNT(DISTINCT "كود العينة") AS sample_count,
+            SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) AS violations,
+            ROUND(100.0 * SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) /
+                  NULLIF(COUNT(DISTINCT "كود العينة"), 0), 1) AS violation_rate_pct
+        FROM chemistry_tidy
+        WHERE "التاريخ" IS NOT NULL
+        GROUP BY period ORDER BY period
+        """
+        df = con.execute(sql).df()
+        con.close()
+        if df.empty:
+            return "⚠️ لم أجد بيانات كافية للتحليل الزمني", df
+        label = self._TIME_PERIOD_LABELS.get(granularity, granularity)
+        response = f"📈 **العينات والمخالفات {label}:**\n\n"
+        response += df.to_markdown(index=False)
+        return response, df
+
+    def _handle_time_series_extreme(self, granularity: str) -> Tuple[str, pd.DataFrame]:
+        """Which period had the highest violation rate. Covers D020."""
+        text, df = self._handle_time_series_breakdown(granularity)
+        if df.empty:
+            return text, df
+        top = df.loc[df["violation_rate_pct"].idxmax()]
+        response = (
+            f"📈 **أعلى فترة من حيث نسبة المخالفة:**\n\n"
+            f"الفترة: **{top['period']}** | نسبة المخالفة: **{top['violation_rate_pct']}%** "
+            f"| العينات: **{int(top['sample_count'])}** | المخالفات: **{int(top['violations'])}**"
+        )
+        return response, df
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Chemical-group-as-filter — ONE shared resolver (Arabic group name →
+    # list of matching pesticide_name values) reused by all 3 handlers.
+    # Covers C024 (single group filter), C027 (multi-group samples),
+    # C029 (two specific groups both present), C030 (group × neighborhood).
+    # C025 (organochlorines) is intentionally NOT here — that group doesn't
+    # exist in classify_pesticide()'s output, so it's routed to the
+    # out-of-scope gate instead (see PART 4).
+    # ──────────────────────────────────────────────────────────────────────
+
+    def _resolve_group_pesticides(self, group_key_ar: str) -> Optional[List[str]]:
+        """
+        Arabic chemical-group name -> list of matching pesticide_name values
+        actually present in the DB. Returns None if the group name isn't
+        recognized at all (vs. an empty list, which means recognized but
+        zero matching pesticides currently in the data).
+        """
+        from modules.mappings import CHEMICAL_GROUP_AR_TO_EN
+        try:
+            from modules.pesticide_groups import classify_pesticide
+        except ImportError:
+            from pesticide_groups import classify_pesticide
+
+        group_en = CHEMICAL_GROUP_AR_TO_EN.get(group_key_ar)
+        if not group_en:
+            return None
+
+        con = self._get_connection()
+        names = con.execute(
+            "SELECT DISTINCT pesticide_name FROM chemistry_tidy WHERE pesticide_name IS NOT NULL"
+        ).df()["pesticide_name"].tolist()
+        con.close()
+        return [n for n in names if classify_pesticide(n) == group_en]
+
+    def _handle_group_filter(self, group_key_ar: str, samples: List[str]) -> Tuple[str, pd.DataFrame]:
+        """Samples (optionally filtered by type) containing any pesticide from one group. C024."""
+        pesticides = self._resolve_group_pesticides(group_key_ar)
+        if pesticides is None:
+            return f"⚠️ '{group_key_ar}' ليست مجموعة كيميائية معروفة في نظام التصنيف الحالي", pd.DataFrame()
+        if not pesticides:
+            return f"⚠️ لم أجد مبيدات مصنّفة ضمن '{group_key_ar}' في البيانات الحالية", pd.DataFrame()
+
+        pest_filter = ", ".join(f"'{p}'" for p in pesticides)
+        sample_filter = self._build_sample_filter(samples) if samples else "1=1"
+        con = self._get_connection()
+        sql = f"""
+        SELECT "اسم العينة" AS sample_type, pesticide_name AS pesticide,
+               COUNT(*) AS detections,
+               SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) AS violations
+        FROM chemistry_tidy
+        WHERE is_detected = 1 AND pesticide_name IN ({pest_filter}) AND {sample_filter}
+        GROUP BY "اسم العينة", pesticide_name ORDER BY detections DESC
+        """
+        df = con.execute(sql).df()
+        con.close()
+        label = " + ".join(samples) if samples else "جميع العينات"
+        if df.empty:
+            return f"⚠️ لم أجد مبيدات {group_key_ar} في {label}", df
+        response = f"🔍 **مبيدات {group_key_ar} في {label}:**\n\n" + df.to_markdown(index=False)
+        return response, df
+
+    def _handle_multi_group_samples(self, min_groups: int = 2) -> Tuple[str, pd.DataFrame]:
+        """Samples containing pesticides from MORE THAN ONE chemical group. C027."""
+        try:
+            from modules.pesticide_groups import classify_pesticide
+        except ImportError:
+            from pesticide_groups import classify_pesticide
+
+        con = self._get_connection()
+        df = con.execute("""
+            SELECT "كود العينة" AS sample_code, "اسم العينة" AS sample_name, pesticide_name
+            FROM chemistry_tidy
+            WHERE is_detected = 1 AND pesticide_name NOT IN ('NO DETECTION', 'NO DATA')
+        """).df()
+        con.close()
+
+        if df.empty:
+            return "⚠️ لم أجد بيانات كافية", df
+
+        df["chemical_group"] = df["pesticide_name"].apply(classify_pesticide)
+        group_counts = df.groupby("sample_code")["chemical_group"].nunique()
+        multi = group_counts[group_counts > min_groups - 1]
+        if multi.empty:
+            return f"⚠️ لم أجد عينات تحتوي على أكثر من {min_groups - 1} مجموعة كيميائية", pd.DataFrame()
+
+        result_df = df[df["sample_code"].isin(multi.index)][
+            ["sample_code", "sample_name"]
+        ].drop_duplicates().merge(
+            multi.rename("group_count"), left_on="sample_code", right_index=True
+        ).sort_values("group_count", ascending=False)
+
+        response = (
+            f"📊 **عينات تحتوي على أكثر من مجموعة كيميائية واحدة:**\n\n"
+            f"✅ العدد: **{len(result_df)}**\n\n"
+        ) + result_df.head(50).to_markdown(index=False)
+        return response, result_df
+
+    def _handle_group_intersection(self, group_a_ar: str, group_b_ar: str) -> Tuple[str, pd.DataFrame]:
+        """Samples containing at least one pesticide from EACH of two groups. C029."""
+        pesticides_a = self._resolve_group_pesticides(group_a_ar)
+        pesticides_b = self._resolve_group_pesticides(group_b_ar)
+        if pesticides_a is None or pesticides_b is None:
+            unknown = group_a_ar if pesticides_a is None else group_b_ar
+            return f"⚠️ '{unknown}' ليست مجموعة كيميائية معروفة في نظام التصنيف الحالي", pd.DataFrame()
+        if not pesticides_a or not pesticides_b:
+            return f"⚠️ لم أجد مبيدات كافية في إحدى المجموعتين ({group_a_ar} / {group_b_ar})", pd.DataFrame()
+
+        filt_a = ", ".join(f"'{p}'" for p in pesticides_a)
+        filt_b = ", ".join(f"'{p}'" for p in pesticides_b)
+        con = self._get_connection()
+        sql = f"""
+        SELECT "كود العينة" AS sample_code, "اسم العينة" AS sample_name
+        FROM chemistry_tidy
+        WHERE is_detected = 1 AND pesticide_name IN ({filt_a})
+        INTERSECT
+        SELECT "كود العينة", "اسم العينة"
+        FROM chemistry_tidy
+        WHERE is_detected = 1 AND pesticide_name IN ({filt_b})
+        """
+        df = con.execute(sql).df()
+        con.close()
+        if df.empty:
+            return f"⚠️ لم أجد عينات تحتوي على {group_a_ar} و{group_b_ar} معاً", df
+        response = (
+            f"📊 **عينات تحتوي على {group_a_ar} و{group_b_ar} معاً:**\n\n"
+            f"✅ العدد: **{len(df)}**\n\n"
+        ) + df.to_markdown(index=False)
+        return response, df
+
+    def _handle_group_by_neighborhood(self) -> Tuple[str, pd.DataFrame]:
+        """Chemical group distribution across neighborhoods (cross-tab). C030."""
+        try:
+            from modules.pesticide_groups import classify_pesticide
+        except ImportError:
+            from pesticide_groups import classify_pesticide
+
+        con = self._get_connection()
+        df = con.execute("""
+            SELECT "الحى" AS neighborhood, pesticide_name,
+                   SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) AS violations,
+                   COUNT(*) AS detections
+            FROM chemistry_tidy
+            WHERE is_detected = 1 AND pesticide_name NOT IN ('NO DETECTION', 'NO DATA')
+              AND "الحى" IS NOT NULL
+            GROUP BY "الحى", pesticide_name
+        """).df()
+        con.close()
+        if df.empty:
+            return "⚠️ لم أجد بيانات كافية", df
+
+        df["chemical_group"] = df["pesticide_name"].apply(classify_pesticide)
+        pivot = df.groupby(["neighborhood", "chemical_group"]).agg(
+            detections=("detections", "sum"), violations=("violations", "sum")
+        ).reset_index().sort_values(["neighborhood", "detections"], ascending=[True, False])
+
+        response = "📊 **توزيع المجموعات الكيميائية عبر الأحياء:**\n\n" + pivot.head(60).to_markdown(index=False)
+        return response, pivot
+
     # ──────────────────────────────────────────────────────────────────────────
     # Average concentration above / below limit
     # ──────────────────────────────────────────────────────────────────────────

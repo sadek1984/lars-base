@@ -1049,6 +1049,14 @@ class CoreQueryEngine(AdvancedHandlersMixin):
                 detail_en="current data only classifies by chemical group, not mechanism of toxicity at a finer level",
             ), None
 
+        organochlorine_kws = ['أورجانوكلورين', 'ارجانوكلورين', 'organochlorine']
+        if any(kw in query for kw in organochlorine_kws):
+            return self._handle_out_of_scope(
+                "data_not_tracked",
+                detail_ar="تصنيف 'أورجانوكلورين' كمجموعة كيميائية منفصلة — البيانات الحالية لا تميزها عن باقي المجموعات",
+                detail_en="a separate 'organochlorine' classification — current data doesn't distinguish it from other groups",
+            ), None
+
         undefined_method_kws_ar = {
             'موسمي': "كيف يُعرَّف 'الموسمي'",
             'قيمة شاذة': "كيف تُعرَّف 'القيمة الشاذة' — IQR أم z-score",
@@ -1466,6 +1474,38 @@ class CoreQueryEngine(AdvancedHandlersMixin):
                 return self._handle_missing_field_pct('neighborhood')
             if 'بلدية' in query:
                 return self._handle_missing_field_pct('municipality')
+        # Pattern TIME_SERIES: monthly/weekly/quarterly/half-year breakdown
+        if 'شهرياً' in query or 'كل شهر' in query or 'مفحوصة شهرياً' in query:
+            return self._handle_time_series_breakdown('month')
+        if 'أسبوعياً' in query or 'كل أسبوع' in query:
+            return self._handle_time_series_breakdown('week')
+        if ('الربع الأول' in query and 'الربع الثاني' in query) or 'ربع سنوي' in query:
+            return self._handle_time_series_breakdown('quarter')
+        if ('النصف الأول' in query and 'النصف الثاني' in query):
+            return self._handle_time_series_breakdown('half')
+        if 'أعلى نسبة مخالفة' in query and 'شهر' in query:
+            return self._handle_time_series_extreme('month')
+
+        # Pattern GROUP_FILTER: category/sample + specific chemical group name
+        # Only Organophosphate is wired here — Organochlorine is intentionally
+        # absent (see _check_out_of_scope for that redirect).
+        group_filter_map = {'أورجانوفوسفورس': 'أورجانوفوسفورس', 'ارجانوفوسفورس': 'أورجانوفوسفورس'}
+        for kw, group_key in group_filter_map.items():
+            if kw in query:
+                return self._handle_group_filter(group_key, detected_samples)
+
+        # Pattern MULTI_GROUP: samples with more than one chemical group
+        if 'أكثر من مجموعة كيميائية' in query or 'اكثر من مجموعة كيميائية' in query:
+            return self._handle_multi_group_samples(2)
+
+        # Pattern GROUP_INTERSECTION: two named groups appearing together
+        if ('نيونيكوتينويد' in query and 'كارباميت' in query and
+                ('معاً' in query or 'معا' in query)):
+            return self._handle_group_intersection('نيونيكوتينويد', 'كارباميت')
+
+        # Pattern GROUP_BY_NEIGHBORHOOD: chemical group distribution across neighborhoods
+        if 'توزيع المجموعات' in query and ('الأحياء' in query or 'أحياء' in query):
+            return self._handle_group_by_neighborhood()
 
         # Pattern 5: Find samples containing pesticide
         # "tomato samples containing bifenthrin"

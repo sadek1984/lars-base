@@ -344,7 +344,6 @@ class IntentRouter:
         if numbers:
             return [int(n) for n in numbers if 1 <= int(n) <= 50]
         return None
-
     # ────────────────────────────────────────────────────────────
     # INTENT CLASSIFICATION
     # ────────────────────────────────────────────────────────────

@@ -188,7 +188,37 @@ PESTICIDE_AR_TO_EN: Dict[str, str] = {
     "الإيمامكتين": "emamectin",
     "ايمامكتين": "emamectin",
 }
+# ============================================================================
+# CHEMICAL GROUP NAMES: Arabic query term → English classify_pesticide() value
+# ============================================================================
+# Built against the CONFIRMED real output of classify_pesticide() across
+# every pesticide_name in the DB (checked directly, not guessed):
+#   Acaricide, Avermectin, Benzimidazole Fungicide, Carbamate, Diamide,
+#   Insect Growth Regulator, Neonicotinoid, Organophosphate, Other,
+#   Phenylpyrazole, Pyrethroid, SDHI Fungicide, Spinosyn,
+#   Strobilurin Fungicide, Triazole Fungicide
+#
+# NOTE: "Organochlorine" is NOT in this list. Any query asking about
+# organochlorines should route to the out-of-scope gate, not this dict —
+# see _check_out_of_scope() in core_query_engine.py.
 
+CHEMICAL_GROUP_AR_TO_EN: Dict[str, str] = {
+    "نيونيكوتينويد": "Neonicotinoid",
+    "أورجانوفوسفورس": "Organophosphate",
+    "ارجانوفوسفورس": "Organophosphate",
+    "اورجانوفوسفوري": "Organophosphate",
+    "بيرثرويد": "Pyrethroid",
+    "كارباميت": "Carbamate",
+    "دياميد": "Diamide",
+    "سبينوسين": "Spinosyn",
+    "أكاريسيد": "Acaricide",
+    "اكاريسيد": "Acaricide",
+    "أفيرمكتين": "Avermectin",
+    "افيرمكتين": "Avermectin",
+    "فينيل بيرازول": "Phenylpyrazole",
+    "فينيلبيرازول": "Phenylpyrazole",
+    "منظم نمو الحشرات": "Insect Growth Regulator",
+}
 # Reverse lookup: English → list of Arabic names (auto-generated)
 PESTICIDE_EN_TO_AR: Dict[str, List[str]] = {}
 for _ar, _en in PESTICIDE_AR_TO_EN.items():
