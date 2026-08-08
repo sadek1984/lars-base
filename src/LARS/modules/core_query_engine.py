@@ -72,7 +72,11 @@ _PERIOD_UNIT_MAP = {
     'شهر': 'month', 'شهور': 'month', 'اشهر': 'month', 'أشهر': 'month', 'month': 'month', 'months': 'month',
     'سنة': 'year', 'سنوات': 'year', 'عام': 'year', 'أعوام': 'year', 'year': 'year', 'years': 'year',
 }
-
+_ARABIC_MONTHS = {
+    'يناير': 1, 'فبراير': 2, 'مارس': 3, 'أبريل': 4, 'ابريل': 4,
+    'مايو': 5, 'يونيو': 6, 'يوليو': 7, 'أغسطس': 8, 'اغسطس': 8,
+    'سبتمبر': 9, 'أكتوبر': 10, 'اكتوبر': 10, 'نوفمبر': 11, 'ديسمبر': 12,
+}
         
 _DUAL_FORMS = {
     'يومين': ('day', 2),
@@ -497,7 +501,19 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         n, unit = parsed
         anchor = '(SELECT MAX(strptime("التاريخ", \'%d/%m/%Y\')) FROM chemistry_tidy)'
         return f'AND strptime("التاريخ", \'%d/%m/%Y\') >= ({anchor} - INTERVAL {n} {unit})'
-        
+    def _detect_absolute_month(self, query: str) -> Optional[str]:
+        """
+        Detect an absolute Arabic month name (e.g. 'مارس') and return a SQL
+        date filter fragment for that calendar month, regardless of year —
+        safe because the dataset spans a single year (confirmed: Jan-May
+        2026 in current data). If the dataset later spans multiple years,
+        this will need a year-disambiguation step added.
+        """
+        for month_name, month_num in _ARABIC_MONTHS.items():
+            if month_name in query:
+                return f'AND date_part(\'month\', strptime("التاريخ", \'%d/%m/%Y\')) = {month_num}'
+        return None
+
     def _get_anchor_date(self):
         """Latest sample date actually present in chemistry_tidy — the same
         anchor used by _detect_time_period()'s SQL filter, fetched once so
@@ -944,8 +960,9 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         detected_neighborhoods = self._detect_neighborhoods(query)
         detected_pesticide = self._detect_pesticide(query)
         detected_period = self._detect_time_period(query)
+        if detected_period is None:
+            detected_period = self._detect_absolute_month(query)
         detected_period_label = self._period_label(query) if detected_period else None
-
         category_key = None
         detected_samples = []
         for s in detected_samples_raw:
@@ -1310,6 +1327,27 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         if 'لم تسجل فيها أي اكتشافات' in query:
             return self._handle_zero_detection_products()
 
+        # Pattern REPORT: general "تقرير" (report) dispatcher — routes to
+        # either the compliance/violation table (if the report is scoped
+        # to non-compliant samples) or the KPI summary (general report),
+        # threading through whatever date filter was detected (relative
+        # period OR absolute month name, both handled in _extract_context).
+        report_kws = ['تقرير']
+        if any(kw in query for kw in report_kws):
+            violation_kws_in_report = ['مخالف', 'راسب', 'غير مطابق']
+            is_violation_report = any(kw in query for kw in violation_kws_in_report)
+
+            if is_violation_report:
+                return self._handle_count_samples_compliance_table(
+                    detected_samples, detected_neighborhoods, True,
+                    date_filter=detected_period,
+                )
+            return self._handle_kpi_summary(
+                date_filter=detected_period,
+                samples=detected_samples,
+                neighborhoods=detected_neighborhoods,
+            )
+
         kpi_kws = ['ملخص تنفيذي', 'المؤشرات الرئيسية', 'في صفحة واحدة']
         if any(kw in query for kw in kpi_kws):
             return self._handle_kpi_summary()
@@ -1596,6 +1634,15 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         cg_exclude_kws = [
             'الأكثر تسبباً', 'الأكثر تسببا', 'أكثر من مجموعة', 'اكثر من مجموعة',
             'نسبة المخالفة لكل مجموعة', 'توزيع المجموعات',
+            # English equivalents — needed because Gemini Live pre-translates
+            # voice queries to English before calling search_pesticide_data,
+            # so an Arabic-only exclusion list never catches these via voice.
+            'causing the most', 'causing most', 'most violations',
+            'highest violations', 'more than one group', 'more than one chemical group',
+            'violation percentage for each', 'violation percentage per',
+            'violation rate for each', 'violation rate per',
+            'distribution of chemical group', 'distribution across neighborhood',
+            'groups across neighborhood',
         ]
         is_cg_excluded = any(kw in query for kw in cg_exclude_kws)
         if any(kw in query_lower for kw in cg_kws_en) and not is_cg_excluded:
@@ -1782,7 +1829,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             return self._handle_category_vs_overall_rate('spice')
 
         # Pattern C020: chemical group causing most violations
-        if 'المجموعة الكيميائية الأكثر تسبباً' in query:
+        if 'المجموعة الكيميائية الأكثر تسبباً' in query or 'المجموعات الكيميائية الأكثر تسبباً' in query:
             return self._handle_chemical_group_top_violator()
 
         # Pattern C022: violation % per chemical group

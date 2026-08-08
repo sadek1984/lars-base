@@ -716,44 +716,76 @@ class AdvancedHandlersMixin:
         response = f"📊 **منتجات لم تسجل فيها أي اكتشافات:**\n\n✅ العدد: **{len(df)}**\n\n" + df.to_markdown(index=False)
         return response, df
     
-    def _handle_kpi_summary(self) -> Tuple[str, pd.DataFrame]:
+    def _handle_kpi_summary(
+        self, date_filter: Optional[str] = None,
+        samples: Optional[List[str]] = None,
+        neighborhoods: Optional[List[str]] = None,
+    ) -> Tuple[str, pd.DataFrame]:
+        """
+        General KPI report, optionally scoped to a specific product
+        (samples) or neighborhood. When scoped, the top-5 breakdown
+        sections are skipped — they don't add value when the report is
+        already narrowed to one product/neighborhood.
+        """
         con = self._get_connection()
-        overview = con.execute("""
+        date_clause = date_filter or ""
+
+        scope_conditions = []
+        scope_label_parts = []
+        if samples:
+            scope_conditions.append(self._build_sample_filter(samples))
+            scope_label_parts.append(" + ".join(samples))
+        if neighborhoods:
+            hood_parts = [f"\"الحى\" LIKE '%{n}%'" for n in neighborhoods]
+            scope_conditions.append(f"({' OR '.join(hood_parts)})")
+            scope_label_parts.append(" + ".join(neighborhoods))
+        scope_clause = f"AND {' AND '.join(scope_conditions)}" if scope_conditions else ""
+        scope_label = " — " + " / ".join(scope_label_parts) if scope_label_parts else ""
+
+        overview = con.execute(f"""
             SELECT
                 COUNT(DISTINCT "كود العينة") AS total_samples,
                 COUNT(DISTINCT CASE WHEN sample_result = 'Non-Compliant' THEN "كود العينة" END) AS non_compliant,
                 COUNT(DISTINCT CASE WHEN sample_result = 'Compliant' THEN "كود العينة" END) AS compliant,
                 ROUND(100.0 * COUNT(DISTINCT CASE WHEN sample_result = 'Non-Compliant' THEN "كود العينة" END) /
                       NULLIF(COUNT(DISTINCT "كود العينة"), 0), 1) AS non_compliant_pct
-            FROM chemistry_tidy
+            FROM chemistry_tidy WHERE 1=1 {date_clause} {scope_clause}
         """).df().iloc[0]
 
-        top_products = con.execute("""
-            SELECT "اسم العينة" AS product, SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) AS violations
-            FROM chemistry_tidy GROUP BY "اسم العينة" ORDER BY violations DESC LIMIT 5
-        """).df()
-
-        top_neighborhoods = con.execute("""
-            SELECT "الحى" AS neighborhood, SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) AS violations
-            FROM chemistry_tidy WHERE "الحى" IS NOT NULL
-            GROUP BY "الحى" ORDER BY violations DESC LIMIT 5
-        """).df()
-
-        date_range = con.execute("""
-            SELECT MIN(strptime("التاريخ", '%d/%m/%Y')) AS first_date,
-                   MAX(strptime("التاريخ", '%d/%m/%Y')) AS last_date
-            FROM chemistry_tidy
-        """).df().iloc[0]
-        con.close()
-
-        response = "📋 **ملخص المؤشرات الرئيسية (KPI Summary):**\n\n"
-        if pd.notna(date_range["first_date"]):
-            response += f"📅 الفترة: {date_range['first_date']:%d/%m/%Y} إلى {date_range['last_date']:%d/%m/%Y}\n\n"
+        response = f"📋 **ملخص المؤشرات الرئيسية (KPI Summary){scope_label}:**\n\n"
         response += f"✅ إجمالي العينات: **{int(overview['total_samples'])}**\n"
         response += f"🟢 مطابقة: **{int(overview['compliant'])}**\n"
         response += f"🔴 غير مطابقة: **{int(overview['non_compliant'])}** ({overview['non_compliant_pct']}%)\n\n"
-        response += "### أعلى ٥ منتجات من حيث المخالفات\n\n" + top_products.to_markdown(index=False) + "\n\n"
-        response += "### أعلى ٥ أحياء من حيث المخالفات\n\n" + top_neighborhoods.to_markdown(index=False)
+
+        if not scope_conditions:
+            # Only show top-5 breakdowns for the GENERAL (unscoped) report —
+            # a product-specific or neighborhood-specific report doesn't
+            # need "top 5 products" when it's already about ONE product.
+            top_products = con.execute(f"""
+                SELECT "اسم العينة" AS product, SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) AS violations
+                FROM chemistry_tidy WHERE 1=1 {date_clause}
+                GROUP BY "اسم العينة" ORDER BY violations DESC LIMIT 5
+            """).df()
+            top_neighborhoods = con.execute(f"""
+                SELECT "الحى" AS neighborhood, SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) AS violations
+                FROM chemistry_tidy WHERE "الحى" IS NOT NULL {date_clause}
+                GROUP BY "الحى" ORDER BY violations DESC LIMIT 5
+            """).df()
+            response += "### أعلى ٥ منتجات من حيث المخالفات\n\n" + top_products.to_markdown(index=False) + "\n\n"
+            response += "### أعلى ٥ أحياء من حيث المخالفات\n\n" + top_neighborhoods.to_markdown(index=False)
+        else:
+            # Scoped report: show top pesticides for this product/neighborhood instead
+            top_pesticides = con.execute(f"""
+                SELECT pesticide_name AS pesticide, SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) AS violations
+                FROM chemistry_tidy
+                WHERE is_detected = 1 AND pesticide_name NOT IN ('NO DETECTION', 'NO DATA')
+                {date_clause} {scope_clause}
+                GROUP BY pesticide_name ORDER BY violations DESC LIMIT 5
+            """).df()
+            if not top_pesticides.empty:
+                response += "### أعلى ٥ مبيدات من حيث المخالفات\n\n" + top_pesticides.to_markdown(index=False)
+
+        con.close()
         return response, overview.to_frame().T
     
     def _handle_hri_top_consumed(self, n: int = 3) -> Tuple[str, pd.DataFrame]:
