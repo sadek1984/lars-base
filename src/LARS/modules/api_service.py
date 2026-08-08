@@ -4,7 +4,12 @@ import streamlit as st
 import requests
 from typing import Any, Dict, Optional
 
-API_BASE_URL = "https://lars-engine-863449087382.us-central1.run.app"
+import os
+
+API_BASE_URL = os.environ.get(
+    "LARS_API_BASE_URL", 
+    "https://lars-engine-pho5rb2goa-uc.a.run.app"
+)
 API_HEADERS = {
     "Content-Type": "application/json",
     "Accept": "application/json",
