@@ -1037,7 +1037,12 @@ class CoreQueryEngine(AdvancedHandlersMixin):
 
         # Mechanism-of-action — confirmed pesticide_groups.py has no MOA
         # data, only classify_pesticide() at the chemical-group level.
-        moa_kws = ['آلية السمّية', 'آلية السمية', 'نفس آلية', 'mechanism of action', 'moa']
+        moa_kws = [
+            'آلية السمّية', 'آلية السمية', 'نفس آلية',
+            'mechanism of action', 'moa',
+            'mechanism of toxicity', 'toxicity mechanism',
+            'same mechanism', 'mode of action', 'same mode of action',
+        ]
         if any(kw in query for kw in moa_kws):
             return self._handle_out_of_scope(
                 "needs_method_definition",

@@ -110,6 +110,11 @@ docker compose up --build
 
 
 streamlit run src/LARS/app_new.py
+# lars-engine local
+cd /Users/a12/lars-base
+PYTHONPATH=/Users/a12/lars-base/src/LARS:/Users/a12/lars-base/src/LARS/modules \
+LARS_DUCKDB_PATH=/Users/a12/lars-base/src/LARS/data/lars_data_test_copy.duckdb \
+uvicorn lars_service:app --host 0.0.0.0 --port 8090
 
 
 
@@ -162,6 +167,7 @@ what tomato samples is non compliant with bifenthrin?
 ماهي عينات القهوة الراسبة اخر شهر
 
 كم عدد عينات الخيار الفريدة بناءً على كود العينة؟
+هل ظهر الأزوكسي ستروبين في الخيار؟
 
 
 ######
