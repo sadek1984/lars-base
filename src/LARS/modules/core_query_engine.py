@@ -1278,10 +1278,14 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         # Pattern EXCEED_MULT: "N times the limit"
         mult_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:ضعف|أضعاف|x|times)', query_lower + " " + query)
         exceed_kws = ['أضعاف الحد', 'ضعف الحد', 'times the limit', 'times the mrl', 'اضعاف', 'ضعف']
-        if mult_match and any(kw in query for kw in exceed_kws):
-            multiplier = float(mult_match.group(1))
+        if any(kw in query for kw in exceed_kws):
+            if mult_match:
+                multiplier = float(mult_match.group(1))
+            else:
+                # Bare "ضعف" with no digit means "double" (multiplier = 2),
+                # same pattern as "مبيدين" implying 2 without a numeral.
+                multiplier = 2.0
             return self._handle_exceedance_multiplier(detected_samples, multiplier, _detected_category_key)
-
         # Pattern PROXIMITY: "between X% and Y% of the limit"
         pct_matches = re.findall(r'(\d+)\s*٪|(\d+)\s*%', query)
         pct_nums = [int(a or b) for a, b in pct_matches]
@@ -1331,7 +1335,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
                     metric = "avg_pesticides"
                 return self._handle_category_comparison(cat_a, cat_b, metric)
         # Pattern MISSING_MRL: data-quality metrics on missing limit_value
-        if 'غير مطابقة' in query and 'حد مسجل' in query:
+        if ('غير مطابقة' in query or 'المخالفة' in query or 'مخالفة' in query) and 'حد مسجل' in query:
             return self._handle_missing_mrl_stats('noncompliant_no_mrl')
         if 'تعذّر تقييمها' in query and 'عدم وجود حد' in query and 'نسبة' not in query:
             return self._handle_missing_mrl_stats('unevaluable_count')
@@ -1515,9 +1519,16 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         # Pattern 6: Neighborhood ranking
         # "ranking of neighborhoods by violations"
         ranking_kws_ar = ['ترتيب', 'الأكثر', 'الاكثر', 'أخطر', 'اخطر']
+        # "breakdown per neighborhood" implies the same grouped output as a
+        # ranking request, even with no explicit ranking word — e.g.
+        # "كم عدد المخالفات في كل حي" has no 'ترتيب'/'الأكثر' but still
+        # wants the same GROUP BY الحى result _handle_neighborhood_ranking
+        # already produces.
+        breakdown_kws_ar = ['في كل حي', 'لكل حي', 'مفصلة']
         neighborhood_kws_ar = ['حي', 'الأحياء', 'الاحياء', 'أحياء', 'احياء']
         if (any(kw in query_lower for kw in ['rank', 'ranking', 'worst', 'most violations']) or
-                any(kw in query for kw in ranking_kws_ar)) and \
+                any(kw in query for kw in ranking_kws_ar) or
+                any(kw in query for kw in breakdown_kws_ar)) and \
            (any(kw in query_lower for kw in ['neighborhood', 'neighborhoods']) or
                 any(kw in query for kw in neighborhood_kws_ar)):
             return self._handle_neighborhood_ranking(date_filter=detected_period)
@@ -1575,21 +1586,21 @@ class CoreQueryEngine(AdvancedHandlersMixin):
                 min_pest = int(nums[0])
             return self._handle_chemical_groups(detected_samples, min_pesticides=min_pest)
 
-        # Pattern CAT_PEST: Category + Pesticide (vegetables with bifenthrin)
         _cat_en_map = {
             'vegetable': 'vegetable', 'vegetables': 'vegetable',
             'fruit': 'fruit', 'fruits': 'fruit',
             'spice': 'spice', 'spices': 'spice',
             'nut': 'nut', 'nuts': 'nut',
             'grain': 'grain', 'grains': 'grain', 'leafy': 'leafy',
-        }
-        # Pattern CAT_PEST: Category + Pesticide (vegetables with bifenthrin)
-        _cat_en_map = {
-            'vegetable': 'vegetable', 'vegetables': 'vegetable',
-            'fruit': 'fruit', 'fruits': 'fruit',
-            'spice': 'spice', 'spices': 'spice',
-            'nut': 'nut', 'nuts': 'nut',
-            'grain': 'grain', 'grains': 'grain', 'leafy': 'leafy',
+            # Arabic — needed since Pattern CAT_LIMIT (فوق الحد وتحت الحد)
+            # and Pattern CAT_PEST both rely on this map, and queries are
+            # frequently Arabic-only (e.g. "للتوابل" never matched 'spice').
+            'توابل': 'spice', 'التوابل': 'spice',
+            'خضار': 'vegetable', 'الخضار': 'vegetable', 'خضروات': 'vegetable',
+            'فواكه': 'fruit', 'الفواكه': 'fruit', 'فاكهة': 'fruit',
+            'مكسرات': 'nut', 'المكسرات': 'nut',
+            'حبوب': 'grain', 'الحبوب': 'grain',
+            'ورقيات': 'leafy', 'الورقيات': 'leafy',
         }
         _cat_key_process = None
         for kw, cat in _cat_en_map.items():
