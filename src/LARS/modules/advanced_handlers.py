@@ -787,7 +787,106 @@ class AdvancedHandlersMixin:
 
         con.close()
         return response, overview.to_frame().T
-    
+    # ──────────────────────────────────────────────────────────────────────
+    # A044 / D022 — sample count and % share per product category
+    # ──────────────────────────────────────────────────────────────────────
+    def _handle_category_totals(self, show_pct: bool = False) -> Tuple[str, pd.DataFrame]:
+        con = self._get_connection()
+        sql = """
+        SELECT
+            sample_category,
+            COUNT(*) AS sample_count,
+            ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 1) AS pct_of_total
+        FROM sample_summary
+        WHERE sample_category IS NOT NULL
+        GROUP BY sample_category
+        ORDER BY sample_count DESC
+        """
+        try:
+            df = con.execute(sql).df()
+        except Exception as exc:
+            con.close()
+            return (
+                "⚠️ جدول sample_summary غير موجود أو غير محدّث. "
+                "شغّل build_sample_summary.py أولاً.",
+                pd.DataFrame(),
+            )
+        con.close()
+        if df.empty:
+            return "⚠️ لم أجد بيانات كافية", df
+
+        title = "نسبة كل نوع منتج من إجمالي العينات" if show_pct else "إجمالي عدد العينات لكل نوع منتج"
+        response = f"📊 **{title}:**\n\n" + df.to_markdown(index=False)
+        return response, df
+
+    # ──────────────────────────────────────────────────────────────────────
+    # D023 — % of total violation RECORDS attributable to spice samples
+    # ──────────────────────────────────────────────────────────────────────
+    def _handle_category_violation_share(self, category_key: str) -> Tuple[str, pd.DataFrame]:
+        con = self._get_connection()
+        conditions = [f"'%{ar}%'" for ar in CATEGORY_AR.get(category_key, [])]
+        # sample_summary.sample_category stores the DB "نوع العينة" value
+        # (e.g. 'Spices'), NOT the Arabic per-item names in CATEGORY_AR —
+        # use the same category-key -> DB-value map as elsewhere.
+        db_category_map = {
+            "vegetable": "Vegetables", "fruit": "Fruits", "spice": "Spices",
+            "nut": "Nuts", "grain": "Grains", "leafy": "Leafy Greens",
+        }
+        db_category = db_category_map.get(category_key)
+        if not db_category:
+            con.close()
+            return f"⚠️ فئة غير معروفة: {category_key}", pd.DataFrame()
+
+        try:
+            row = con.execute(f"""
+                SELECT
+                    (SELECT SUM(violation_count) FROM sample_summary WHERE sample_category = '{db_category}') AS category_violations,
+                    (SELECT SUM(violation_count) FROM sample_summary) AS total_violations
+            """).df().iloc[0]
+        except Exception:
+            con.close()
+            return (
+                "⚠️ جدول sample_summary غير موجود أو غير محدّث. "
+                "شغّل build_sample_summary.py أولاً.",
+                pd.DataFrame(),
+            )
+        con.close()
+
+        cat_v = int(row["category_violations"] or 0)
+        total_v = int(row["total_violations"] or 0)
+        pct = round(100.0 * cat_v / total_v, 1) if total_v else 0.0
+
+        label = {"vegetable": "الخضار", "fruit": "الفواكه", "spice": "التوابل",
+                  "nut": "المكسرات", "grain": "الحبوب", "leafy": "الورقيات"}.get(category_key, category_key)
+        response = (
+            f"📊 **نسبة {label} من إجمالي المخالفات:**\n\n"
+            f"مخالفات {label}: **{cat_v}**\n"
+            f"إجمالي المخالفات: **{total_v}**\n"
+            f"النسبة: **{pct}%**"
+        )
+        return response, row.to_frame().T
+
+    # ──────────────────────────────────────────────────────────────────────
+    # B050 — top 10 readings by % exceedance (per-reading, no aggregate
+    # table needed — direct query on chemistry_tidy)
+    # ──────────────────────────────────────────────────────────────────────
+    def _handle_top_exceedance_readings(self, n: int = 10) -> Tuple[str, pd.DataFrame]:
+        con = self._get_connection()
+        sql = f"""
+        SELECT "كود العينة" AS sample_code, "اسم العينة" AS sample_name,
+               pesticide_name AS pesticide, concentration, limit_value AS mrl,
+               ROUND(exceedance_ratio * 100, 1) AS pct_exceedance
+        FROM chemistry_tidy
+        WHERE is_detected = 1 AND limit_value > 0
+        ORDER BY exceedance_ratio DESC
+        LIMIT {n}
+        """
+        df = con.execute(sql).df()
+        con.close()
+        if df.empty:
+            return "⚠️ لم أجد بيانات كافية", df
+        response = f"📊 **أعلى {n} قراءات تجاوزاً للحد (بالنسبة المئوية):**\n\n" + df.to_markdown(index=False)
+        return response, df
     def _handle_hri_top_consumed(self, n: int = 3) -> Tuple[str, pd.DataFrame]:
         try:
             from modules.pesticide_groups import get_consumption

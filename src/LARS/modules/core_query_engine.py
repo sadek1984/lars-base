@@ -1327,6 +1327,23 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         if 'لم تسجل فيها أي اكتشافات' in query:
             return self._handle_zero_detection_products()
 
+        # Pattern A044/D022: sample count / % share per product category
+        if 'إجمالي عدد العينات لكل نوع منتج' in query:
+            return self._handle_category_totals(show_pct=False)
+        if 'نسبة كل نوع منتج من إجمالي العينات' in query:
+            return self._handle_category_totals(show_pct=True)
+
+        # Pattern D023: category's share of total violations
+        if 'نسبة عينات التوابل من إجمالي المخالفات' in query or \
+           ('نسبة' in query and 'التوابل' in query and 'إجمالي المخالفات' in query):
+            return self._handle_category_violation_share('spice')
+
+        # Pattern B050: top N readings by % exceedance
+        if 'أعلى' in query and ('قراءات' in query) and ('تجاوزاً' in query or 'بالنسبة المئوية' in query):
+            n_match = re.search(r'أعلى\s*(\d+)', query)
+            n = int(n_match.group(1)) if n_match else 10
+            return self._handle_top_exceedance_readings(n)
+
         # Pattern REPORT: general "تقرير" (report) dispatcher — routes to
         # either the compliance/violation table (if the report is scoped
         # to non-compliant samples) or the KPI summary (general report),
