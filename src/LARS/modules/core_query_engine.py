@@ -930,6 +930,9 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             if intent.name.startswith("POISONING_"):
                 text, df, _ = self._handle_poisoning(intent, query, entities)
                 return text, df
+            if intent.name.startswith("INSPECTION_PRIORITY_"):
+                text, df, _ = self._handle_inspection_priority(intent, query, entities)
+                return text, df
 
         except Exception as ex:
             logging.warning(f"Intent dispatch error for {intent}: {ex}")
@@ -941,6 +944,45 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         con = self._get_connection()
         text, df, meta = handle_poisoning(con, intent, entities)
         return text, df, None
+
+    def _handle_inspection_priority(self, intent, query, entities=None):
+        from modules.inspection_priority import (
+            is_available, get_top, search_entity,
+            to_text, to_voice_summary, component_breakdown,
+            extract_priority_params,
+        )
+        con = self._get_connection()
+
+        if not is_available(con=con):
+            return ("طبقة أولوية التفتيش غير مبنية بعد. شغّل build_risk_scores.py أولًا.",
+                    None, None)
+
+        params = extract_priority_params(query)
+        level = params["level"]
+        top_n = params["top_n"]
+
+        # ── ليه المنشأة X أولوية؟ ──
+        if intent.name == "INSPECTION_PRIORITY_REASON":
+            match = search_entity(query, level="establishment", con=con)
+            if match.empty:
+                match = search_entity(query, level=level, con=con)
+            if match.empty:
+                return ("لم أجد منشأة بهذا الاسم في جدول الأولويات.", None, None)
+            row = match.iloc[0].to_dict()
+            text = (f"**{row['entity_name']}** — درجة أولوية {row['risk_score']:.0f}\n\n"
+                    f"{row['reason_ar']}")
+            return text, component_breakdown(row), None
+
+        # ── أي حي يستحق زيارة عاجلة؟ ──
+        if intent.name == "INSPECTION_PRIORITY_URGENT_NEIGHBORHOOD":
+            level = "neighborhood"
+
+        # ── الحالة الافتراضية: أعلى N ──
+        df = get_top(level=level, n=top_n, min_confidence="medium", con=con)
+        if df.empty:
+            df = get_top(level=level, n=top_n, con=con)
+
+        return to_text(df, level, con=con), df, None
 
     def _extract_context(self, query: str) -> dict:
         """

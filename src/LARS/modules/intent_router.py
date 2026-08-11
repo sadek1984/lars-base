@@ -91,6 +91,11 @@ class Intent(Enum):
     POISONING_ESTABLISHMENT  = auto()
     POISONING_QUALITY        = auto()
 
+     # ── Inspection priority (risk_scores) ──
+    INSPECTION_PRIORITY_TOP                 = auto()  # أعلى N منشأة/حي/بلدية أولوية
+    INSPECTION_PRIORITY_URGENT_NEIGHBORHOOD = auto()  # أي حي يستحق زيارة عاجلة
+    INSPECTION_PRIORITY_REASON              = auto()  # ليه منشأة X أولوية؟ 
+
 # ============================================================================
 # ENTITY CONTAINER
 # ============================================================================
@@ -354,6 +359,12 @@ class IntentRouter:
         psn = classify_poisoning(query)
         if psn:
             return Intent[INTENT_ENUM_NAME[psn]]
+
+        from modules.inspection_priority import classify_inspection_priority, PRIORITY_INTENT_ENUM_NAME
+        pri = classify_inspection_priority(query)
+        if pri:
+            return Intent[PRIORITY_INTENT_ENUM_NAME[pri]]
+
         """Determine intent from entities + keywords.
 
         Rules are ordered from MOST SPECIFIC to LEAST SPECIFIC.
