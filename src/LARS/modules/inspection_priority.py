@@ -98,6 +98,24 @@ def classify_inspection_priority(query: str):
     return "top"
 
 
+_REASON_STRIP_WORDS = (
+    "لماذا", "ليه", "ليش", "why", "السبب", "ما سبب", "سبب",
+    "أولوية", "اولوية", "؟", "?",
+)
+
+
+def extract_entity_name_for_reason(query: str) -> str:
+    """
+    يشيل كلمات السؤال المعروفة (لماذا/السبب/أولوية...) من الجملة عشان يفضل
+    بس اسم الكيان — search_entity() بتعمل ILIKE '%name%' فمحتاجة اسم نضيف،
+    مش الجملة كاملة (وإلا هترجع فاضية دايمًا).
+    """
+    q = query
+    for w in _REASON_STRIP_WORDS:
+        q = q.replace(w, " ")
+    return re.sub(r"\s+", " ", q).strip()
+
+
 def extract_priority_params(query: str) -> dict:
     """
     يستخرج مستوى الكيان وعدد الـ N من السؤال — يتنادى في الـ handler

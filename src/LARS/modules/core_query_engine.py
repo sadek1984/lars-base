@@ -963,9 +963,11 @@ class CoreQueryEngine(AdvancedHandlersMixin):
 
         # ── ليه المنشأة X أولوية؟ ──
         if intent.name == "INSPECTION_PRIORITY_REASON":
-            match = search_entity(query, level="establishment", con=con)
+            from modules.inspection_priority import extract_entity_name_for_reason
+            name = extract_entity_name_for_reason(query)
+            match = search_entity(name, level="establishment", con=con)
             if match.empty:
-                match = search_entity(query, level=level, con=con)
+                match = search_entity(name, level=level, con=con)
             if match.empty:
                 return ("لم أجد منشأة بهذا الاسم في جدول الأولويات.", None, None)
             row = match.iloc[0].to_dict()
