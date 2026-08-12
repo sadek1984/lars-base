@@ -34,6 +34,28 @@ class QueryRequest(BaseModel):
 @app.post("/api/lars/query")
 async def query_lars(request: QueryRequest):
     try:
+        # ── فحص مبكر: أسئلة أولوية التفتيش تاخد ملخص صوتي مختصر ──
+        # (مش الجدول الكامل — نفس مبدأ عدم قراءة جداول طويلة بالصوت)
+        try:
+            from modules.inspection_priority import (
+                classify_inspection_priority, extract_priority_params,
+                get_top, to_voice_summary,
+            )
+            kind = classify_inspection_priority(request.query)
+            if kind in ("top", "urgent_neighborhood"):
+                params = extract_priority_params(request.query)
+                level = "neighborhood" if kind == "urgent_neighborhood" else params["level"]
+                db_path = os.environ.get("LARS_DUCKDB_PATH",
+                                          "/app/src/LARS/data/lars_data.duckdb")
+                df = get_top(level=level, n=params["top_n"],
+                            min_confidence="medium", db_path=db_path)
+                if df.empty:
+                    df = get_top(level=level, n=params["top_n"], db_path=db_path)
+                answer = to_voice_summary(df, level)
+                return {"success": True, "answer": answer}
+        except Exception as e:
+            logger.warning(f"Priority voice shortcut failed, falling back: {e}")
+
         engine = get_lars_engine()
         if hasattr(engine, "process"):
             result = engine.process(request.query)

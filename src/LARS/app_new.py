@@ -56,6 +56,7 @@ PAGES: dict[str, str] = {
     "📈 Trend Analysis": "modules.trend_analysis:show_trend_analysis_page",
     "📋 Statistical Insights": "modules.statistical_insights:show_statistical_insights_page",
     "🔮 Predictions": "modules.predictions:show_predictions_page",
+    "🎯 أولوية التفتيش": "modules.inspection_priority_page:show_inspection_priority_page",
 }
 
 
