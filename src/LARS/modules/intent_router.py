@@ -94,7 +94,8 @@ class Intent(Enum):
      # ── Inspection priority (risk_scores) ──
     INSPECTION_PRIORITY_TOP                 = auto()  # أعلى N منشأة/حي/بلدية أولوية
     INSPECTION_PRIORITY_URGENT_NEIGHBORHOOD = auto()  # أي حي يستحق زيارة عاجلة
-    INSPECTION_PRIORITY_REASON              = auto()  # ليه منشأة X أولوية؟ 
+    INSPECTION_PRIORITY_REASON              = auto()  # ليه منشأة X أولوية؟
+    INSPECTION_PRIORITY_ROUTE               = auto()  # أعطني خريطة للمناطق اللي تستحق زيارة عاجلة
 
 # ============================================================================
 # ENTITY CONTAINER

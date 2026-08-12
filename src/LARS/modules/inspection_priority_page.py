@@ -16,6 +16,8 @@ from modules.inspection_priority import (
     LEVEL_AR_PLURAL,
     component_breakdown,
     freshness_badge,
+    get_low_confidence_alerts,
+    get_recommended_route,
     get_top,
     is_available,
 )
@@ -30,6 +32,88 @@ def _get_connection():
     if not _DUCKDB_PATH.exists():
         return None
     return get_duckdb_read()
+
+
+def _score_color(score: float) -> str:
+    """درجة اللون حسب شدة الأولوية — أحمر للحرج، أخضر للمطمئن."""
+    if score >= 75:
+        return "#dc2626"   # أحمر
+    if score >= 50:
+        return "#ea580c"   # برتقالي
+    if score >= 25:
+        return "#d97706"   # كهرماني
+    return "#16a34a"       # أخضر
+
+
+def _route_card_html(label: str, name: str, score: float, subtitle: str = "") -> str:
+    color = _score_color(score)
+    subtitle_html = (
+        f'<div style="font-size:13px;color:#6b7280;margin-top:4px;">{subtitle}</div>'
+        if subtitle else ""
+    )
+    # مهم: كل الـ HTML على سطر واحد بلا مسافات إزاحة — أي سطر يبدأ بـ٤ مسافات
+    # أو أكتر جوّه st.markdown بيتفسّر Markdown-code-block مش HTML، فيظهر كنص خام.
+    return (
+        f'<div style="background:linear-gradient(135deg, {color}15, {color}05);'
+        f'border:2px solid {color};border-radius:14px;padding:18px 22px;'
+        f'text-align:center;min-width:200px;box-shadow:0 2px 8px rgba(0,0,0,0.06);">'
+        f'<div style="font-size:12px;color:{color};font-weight:700;letter-spacing:1px;">{label}</div>'
+        f'<div style="font-size:20px;font-weight:800;color:#1f2937;margin-top:4px;">{name}</div>'
+        f'<div style="display:inline-block;margin-top:10px;padding:4px 14px;'
+        f'background:{color};color:white;border-radius:20px;font-size:15px;font-weight:700;">'
+        f'{score:.0f}</div>'
+        f'{subtitle_html}'
+        f'</div>'
+    )
+
+
+def _arrow_html() -> str:
+    return '<div style="text-align:center;font-size:26px;color:#9ca3af;line-height:1;margin:2px 0;">⬇</div>'
+
+
+def render_route_infographic(route: dict) -> None:
+    """التوصية الهرمية كانفوجرافيك: بلدية ← حي ← منشآت، بألوان حسب الدرجة."""
+    st.markdown("### 🧭 التوصية الهرمية لليوم")
+
+    if not route.get("found"):
+        st.info("لا توجد توصية متاحة حاليًا — البيانات غير كافية لتحديد مسار واضح.")
+        return
+
+    m, h, ests = route["municipality"], route["neighborhood"], route["establishments"]
+    from modules.inspection_priority import _muni_label
+
+    html_parts = [
+        '<div dir="rtl" style="display:flex;flex-direction:column;align-items:center;gap:6px;">',
+        _route_card_html("بلدية", _muni_label(m["entity_name"]), m["risk_score"]),
+        _arrow_html(),
+        _route_card_html("حي", h["entity_name"], h["risk_score"]),
+        _arrow_html(),
+        '<div style="display:flex;gap:16px;flex-wrap:wrap;justify-content:center;">',
+    ]
+    for e in ests:
+        subtitle = (e.get("reason_ar") or "")[:70]
+        html_parts.append(
+            _route_card_html("منشأة", e["entity_name"], e["risk_score"], subtitle)
+        )
+    html_parts.append("</div></div>")
+
+    # "".join بلا أي \n بين الأجزاء — تأكيد إضافي إن الناتج سطر واحد فعليًا
+    st.markdown("".join(html_parts), unsafe_allow_html=True)
+
+    # ── تفاصيل الأسباب كاملة تحت الكارت (النص مقصوص فوق للمساحة) ──
+    with st.expander("📋 تفاصيل أسباب كل منشأة"):
+        for e in ests:
+            st.markdown(f"**{e['entity_name']}** — درجة {e['risk_score']:.0f}")
+            st.caption(e.get("reason_ar", ""))
+
+    if route.get("warning"):
+        warning_html = (
+            '<div dir="rtl" style="margin-top:16px;padding:14px 18px;border-radius:10px;'
+            'background:#fef3c7;border:1px solid #f59e0b;color:#92400e;font-size:14px;">'
+            f"⚠️ {route['warning']}</div>"
+        )
+        st.markdown(warning_html, unsafe_allow_html=True)
+
 
 
 def _confidence_badge(conf: str) -> str:
@@ -113,6 +197,34 @@ def show_inspection_priority_page(api_client: "APIClient | None" = None) -> None
         return
 
     st.info(f"ℹ️ {freshness_badge(con=con)}")
+
+    # ── التوصية الهرمية (انفوجرافيك) ──
+    capacity = st.slider(
+        "🚗 كام منشأة تقدر فرقة التفتيش تزورها في هذه الرحلة؟",
+        min_value=1, max_value=5, value=2,
+        help="يحدد عدد المنشآت المعروضة في التوصية داخل الحي المختار.",
+    )
+    route = get_recommended_route(min_confidence="medium", top_n_establishments=capacity, con=con)
+    render_route_infographic(route)
+
+    # ── منشآت عالية الخطورة لكن ثقتها منخفضة — مستبعدة من التوصية الأساسية عمدًا ──
+    alerts = get_low_confidence_alerts(top=5, con=con)
+    if not alerts.empty:
+        with st.expander(
+            f"⚠️ {len(alerts)} منشأة درجتها عالية لكن بعينات قليلة — تحتاج مراجعة يدوية",
+            expanded=False,
+        ):
+            st.caption(
+                "مستبعدة من التوصية الأساسية عمدًا (الثقة الإحصائية منخفضة)، "
+                "لكن الدرجة العالية تستاهل تنبيه — راجعها بنفسك قبل تجاهلها."
+            )
+            for _, r in alerts.iterrows():
+                st.markdown(f"**{r['entity_name']}** — درجة {r['risk_score']:.0f} "
+                           f"({int(r['total_samples'])} عينة فقط)")
+                st.caption(r["reason_ar"])
+
+    st.markdown("---")
+    st.markdown("### 📊 الترتيب الكامل حسب المستوى")
 
     # ── إعدادات العرض ──
     col1, col2, col3 = st.columns([2, 2, 2])

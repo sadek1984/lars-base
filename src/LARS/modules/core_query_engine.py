@@ -975,6 +975,15 @@ class CoreQueryEngine(AdvancedHandlersMixin):
                     f"{row['reason_ar']}")
             return text, component_breakdown(row), None
 
+        if intent.name == "INSPECTION_PRIORITY_ROUTE":
+            from modules.inspection_priority import (
+                get_recommended_route, to_route_text, to_route_voice,
+            )
+            route = get_recommended_route(min_confidence="medium", con=con)
+            text = to_route_text(route)
+            df = pd.DataFrame(route.get("establishments", [])) if route.get("found") else None
+            return text, df, {"voice_summary": to_route_voice(route)}
+
         # ── أي حي يستحق زيارة عاجلة؟ ──
         if intent.name == "INSPECTION_PRIORITY_URGENT_NEIGHBORHOOD":
             level = "neighborhood"
