@@ -57,6 +57,7 @@ PAGES: dict[str, str] = {
     "📋 Statistical Insights": "modules.statistical_insights:show_statistical_insights_page",
     "🔮 Predictions": "modules.predictions:show_predictions_page",
     "🎯 أولوية التفتيش": "modules.inspection_priority_page:show_inspection_priority_page",
+    "📑 التقارير المتقدمة": "modules.advanced_reports:show_advanced_reports_page",
 }
 
 
