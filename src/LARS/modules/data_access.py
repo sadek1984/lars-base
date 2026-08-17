@@ -99,6 +99,12 @@ def load_dataframe(
 # ============================================================================
 # DUCKDB CONNECTIONS
 # ============================================================================
+def _shared_connection():
+    """The ONE connection object for the whole app process. Opened
+    read_write so it serves both reads (existing behavior, unchanged) and
+    writes (new: log_inspection). st.cache_resource means this function
+    body runs once per process, not once per Streamlit rerun."""
+    return duckdb.connect(str(_DUCKDB_PATH), read_only=False)
 
 def _resolve_duckdb_path() -> Optional[Path]:
     """Find the DuckDB database file."""
@@ -115,7 +121,7 @@ def get_duckdb_read() -> Optional[duckdb.DuckDBPyConnection]:
     if db_path is None:
         logger.warning("DuckDB file not found.")
         return None
-    return duckdb.connect(str(db_path), read_only=True)
+    return _shared_connection()
 
 
 def get_duckdb_write() -> Optional[duckdb.DuckDBPyConnection]:
@@ -132,4 +138,4 @@ def get_duckdb_write() -> Optional[duckdb.DuckDBPyConnection]:
     if db_path is None:
         logger.warning("DuckDB file not found.")
         return None
-    return duckdb.connect(str(db_path), read_only=False)
+    return _shared_connection()

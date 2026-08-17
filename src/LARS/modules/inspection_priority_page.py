@@ -20,7 +20,14 @@ from modules.inspection_priority import (
     get_recommended_route,
     get_top,
     is_available,
+    log_inspection,
+    undo_inspection,
+    get_recent_inspections,
+    effective_days_since,
+    municipality_trend,
+    _muni_label,
 )
+from modules.inspection_map import show_priority_map
 
 if TYPE_CHECKING:
     from modules.api_service import APIClient
@@ -80,7 +87,6 @@ def render_route_infographic(route: dict) -> None:
         return
 
     m, h, ests = route["municipality"], route["neighborhood"], route["establishments"]
-    from modules.inspection_priority import _muni_label
 
     html_parts = [
         '<div dir="rtl" style="display:flex;flex-direction:column;align-items:center;gap:6px;">',
@@ -115,6 +121,85 @@ def render_route_infographic(route: dict) -> None:
         st.markdown(warning_html, unsafe_allow_html=True)
 
 
+def render_inspection_buttons(route: dict, con) -> None:
+    """زر '✅ تم التفتيش' لكل منشأة في التوصية — يسجّل زيارة في inspections_log
+    ويعمل rerun فورًا عشان المنشأة تختفي من التوصية ويظهر اللي بعدها.
+    قائمة '↩️ آخر الزيارات المسجّلة' بتتقرا من قاعدة البيانات مباشرة، مش من
+    session_state — عشان تفضل متاحة حتى لو سجّلت زيارة تانية أو عملت
+    reload للصفحة، مش بس آخر ضغطة في نفس الجلسة."""
+    if not route.get("found"):
+        return
+    st.markdown("#### ✅ تسجيل زيارة")
+    cols = st.columns(len(route["establishments"]))
+    for col, e in zip(cols, route["establishments"]):
+        with col:
+            if st.button(f"تم تفتيش: {e['entity_name']}", key=f"insp_{e['entity_name']}"):
+                log_inspection(
+                    entity_name=e["entity_name"],
+                    level="establishment",
+                    municipality=route["municipality"]["entity_name"],
+                    neighborhood=route["neighborhood"]["entity_name"],
+                    con=con,
+                )
+                st.success(f"تم تسجيل زيارة {e['entity_name']} — هتختفي من التوصية "
+                          f"لمدة أسبوع، وهتظهر المنشأة اللي بعدها في الترتيب.")
+                st.rerun()
+
+    recent = get_recent_inspections(limit=10, level="establishment", con=con)
+    if not recent.empty:
+        with st.expander(f"↩️ آخر {len(recent)} زيارة مسجّلة — للتراجع", expanded=False):
+            for _, r in recent.iterrows():
+                rcol1, rcol2 = st.columns([4, 1])
+                with rcol1:
+                    when = pd.to_datetime(r["inspected_at"]).strftime("%Y-%m-%d %H:%M")
+                    st.markdown(f"**{r['entity_name']}** — {r['neighborhood'] or ''} · {when}")
+                with rcol2:
+                    if st.button("تراجع", key=f"undo_{int(r['id'])}"):
+                        undo_inspection(int(r["id"]), con=con)
+                        st.success(f"تم التراجع عن تسجيل زيارة {r['entity_name']}.")
+                        st.rerun()
+
+
+def _muni_label_safe(route: dict) -> str:
+    return _muni_label(route["municipality"]["entity_name"])
+
+
+def render_headline(route: dict, alerts_count: int) -> None:
+    """سطر العنوان الرئيسي — الحكم أولًا، التفاصيل بعده. أول حاجة يشوفها
+    المدير لما يفتح الصفحة، من غير ما يحتاج يقرا جدول."""
+    if not route.get("found"):
+        return
+    n_ests = len(route.get("establishments", []))
+    html = (
+        '<div dir="rtl" style="border-right:4px solid #dc2626;padding:12px 16px;'
+        'background:#fef2f2;border-radius:0 8px 8px 0;margin-bottom:16px;">'
+        f'<div style="font-size:16px;font-weight:700;color:#1f2937;">'
+        f'{n_ests} منشأة تحتاج زيارة اليوم'
+        f'{f" — و{alerts_count} أخرى تحتاج مراجعة يدوية" if alerts_count else ""}'
+        f'</div>'
+        f'<div style="font-size:13px;color:#6b7280;margin-top:2px;">'
+        f'{_muni_label_safe(route)} ← حي {route["neighborhood"]["entity_name"]}'
+        f'</div></div>'
+    )
+    st.markdown(html, unsafe_allow_html=True)
+
+
+def render_municipality_trend(con) -> None:
+    """بلديات نسبة مخالفاتها في ازدياد آخر ٣٠ يوم — مقارنة بفترة قبلها،
+    بس للبلديات اللي عندها عدد عينات كافي في الفترتين (٥+)."""
+    trend = municipality_trend(window_days=30, con=con)
+    if trend.empty:
+        return  # مفيش بيانات كافية لمقارنة موثوقة
+    worsening = trend[trend["delta_pp"] > 0]
+    if worsening.empty:
+        return
+    with st.expander(f"📈 {len(worsening)} بلدية نسبة مخالفاتها في ازدياد آخر ٣٠ يوم", expanded=False):
+        st.caption("مقارنة بآخر ٣٠ يوم قبلها — بلديات فيها عدد عينات كافي في الفترتين بس (٥+).")
+        display = worsening.copy()
+        display.columns = ["البلدية", "معدل سابق %", "معدل حالي %", "التغيّر (نقطة مئوية)",
+                           "عدد عينات سابق", "عدد عينات حالي"]
+        st.dataframe(display, use_container_width=True, hide_index=True)
+
 
 def _confidence_badge(conf: str) -> str:
     return {"high": "🟢 ثقة عالية", "medium": "🟡 ثقة متوسطة", "low": "🔴 ثقة منخفضة"}.get(conf, conf)
@@ -129,10 +214,17 @@ def _render_level_table(level: str, con, top_n: int, min_conf: str) -> pd.DataFr
         st.warning("مفيش نتائج بالفلتر ده — جرّب تقلل حد الثقة.")
         return df
 
+    # آخر معاينة فعلية = الأقرب بين تاريخ آخر عينة معملية وأي زيارة مسجّلة
+    # يدويًا — منشأة اتزارت إمبارح ماينفعش تفضل شكلها "مهملة" لحد ما
+    # risk_scores يتبني تاني.
+    df["effective_days"] = df.apply(
+        lambda r: effective_days_since({**r.to_dict(), "level": level}, con=con), axis=1
+    )
+
     display_df = df[["rank_in_level", "entity_name", "risk_score", "confidence",
-                      "total_samples", "violations", "days_since_last_sample"]].copy()
+                     "total_samples", "violations", "effective_days"]].copy()
     display_df.columns = ["الترتيب", "الاسم", "الدرجة", "الثقة", "عدد العينات",
-                           "المخالفات", "أيام بدون عينات"]
+                          "المخالفات", "آخر معاينة (يوم)"]
     display_df["الثقة"] = display_df["الثقة"].map(_confidence_badge)
 
     st.dataframe(
@@ -196,19 +288,24 @@ def show_inspection_priority_page(api_client: "APIClient | None" = None) -> None
         st.code("python scripts/build_risk_scores.py", language="bash")
         return
 
-    st.info(f"ℹ️ {freshness_badge(con=con)}")
-
-    # ── التوصية الهرمية (انفوجرافيك) ──
+    # ── التوصية الهرمية + التنبيهات (لازم تتحسب قبل سطر العنوان، عشان
+    # العنوان بيلخّص نتيجتهم) ──
     capacity = st.slider(
         "🚗 كام منشأة تقدر فرقة التفتيش تزورها في هذه الرحلة؟",
         min_value=1, max_value=5, value=2,
         help="يحدد عدد المنشآت المعروضة في التوصية داخل الحي المختار.",
     )
     route = get_recommended_route(min_confidence="medium", top_n_establishments=capacity, con=con)
-    render_route_infographic(route)
-
-    # ── منشآت عالية الخطورة لكن ثقتها منخفضة — مستبعدة من التوصية الأساسية عمدًا ──
     alerts = get_low_confidence_alerts(top=5, con=con)
+
+    # ── سطر العنوان الرئيسي — أول حاجة يشوفها المدير ──
+    render_headline(route, len(alerts))
+
+    st.info(f"ℹ️ {freshness_badge(con=con)}")
+
+    render_route_infographic(route)
+    render_inspection_buttons(route, con)
+
     if not alerts.empty:
         with st.expander(
             f"⚠️ {len(alerts)} منشأة درجتها عالية لكن بعينات قليلة — تحتاج مراجعة يدوية",
@@ -222,6 +319,11 @@ def show_inspection_priority_page(api_client: "APIClient | None" = None) -> None
                 st.markdown(f"**{r['entity_name']}** — درجة {r['risk_score']:.0f} "
                            f"({int(r['total_samples'])} عينة فقط)")
                 st.caption(r["reason_ar"])
+
+    render_municipality_trend(con)
+
+    st.markdown("---")
+    show_priority_map(con, get_top, route=route)
 
     st.markdown("---")
     st.markdown("### 📊 الترتيب الكامل حسب المستوى")
@@ -269,3 +371,5 @@ def show_inspection_priority_page(api_client: "APIClient | None" = None) -> None
         file_name=f"inspection_priority_{level}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
+    

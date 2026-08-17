@@ -231,3 +231,256 @@ what tomato samples is non compliant with bifenthrin?
 
   ماعدد المبيدات في كل صنف ، مثلا الطماطم عددها كلها ١٠٠ عينة ، ٥٠ عينة عدد ٢ مبيد ، ٥٠ عينه عدد ١ مبيد
 
+
+
+# LARS — Inspection Priority & Advanced Reports
+
+Two decision-support modules in the LARS Streamlit app (`app_new.py`), both
+reading from the shared `chemistry_tidy` / `risk_scores` DuckDB tables.
+
+| Page | Registry key | Entry point |
+|---|---|---|
+| 🎯 أولوية التفتيش | `"🎯 أولوية التفتيش"` | `modules.inspection_priority_page:show_inspection_priority_page` |
+| 📑 التقارير المتقدمة | `"📑 التقارير المتقدمة"` | `modules.advanced_reports:show_advanced_reports_page` |
+
+---
+
+## 📑 Advanced Reports (التقارير المتقدمة)
+
+### Purpose
+
+Seasonal pesticide-residue reports previously took chemists **weeks** to
+produce by hand, one commodity at a time, transcribed from printed tables.
+This page generates the full report **in one click for any commodity, or
+all commodities at once**, directly from live lab data.
+
+### Report tables
+
+| # | Sheet | Contents |
+|---|---|---|
+| 1 | Seasonal summary | Total / pesticide-free / with residues / violated / ≤MRL, per season |
+| 2 | Residue distribution | Histogram of pesticides-per-sample, per season |
+| 3 | Pesticide detail | Per-compound frequency, exceed rate, min–max, mean concentration, MRL |
+| 4 | IqR quality index | Σ(conc ÷ MRL) per sample, binned into quality categories |
+| 5 | Category breakdown | Insecticide / fungicide / acaricide / herbicide / nematicide |
+| 6 | Facility risk scorecard | Healthy / Watch / Risky classification per facility |
+| 7 | Pesticide watchlist | Compounds whose exceed rate is rising season-over-season |
+
+All seven render as tabs in the UI and export as a single Excel workbook.
+
+### ⚠️ Compliance verdict — read this before modifying
+
+**`sample_result` is the single source of truth for compliance.** Never
+re-derive violations from `concentration > limit_value`.
+
+An earlier version did exactly that and reported **35 violated** cucumber
+samples in Winter; the correct lab-adjudicated figure is **2**. The raw
+`limit_value` field carries data-entry noise (typos, superseded standards),
+while `sample_result` holds the chemists' actual sign-off.
+
+Raw MRL comparison is still used, but **only** for:
+- Table 3 exceed-rate statistics (diagnostic)
+- Table 4 IqR severity scoring
+- The verdict-reconciliation audit (flags where the two disagree)
+
+### MRL canonicalization rule
+
+Applied per `(commodity, pesticide)` group in `canonicalize_mrl()`:
+
+| Condition | Treatment |
+|---|---|
+| Most frequent value | **Dominant** — the reference |
+| Minority, ≤2 samples, clean 10×/100×/0.1×/0.01× shift | **Typo** → corrected to dominant |
+| Minority, >2 samples | **Legitimate superseded standard** → kept as recorded |
+| Anything else | **Ambiguous** → kept as recorded, flagged for review |
+
+Worked example — dinotefuran in cucumber: `5.0` (n=2) is corrected to the
+dominant `0.5`; `0.01` (n=8) is kept, being the pre-update EU MRL.
+
+Nothing is ever silently changed — every correction is logged.
+
+### IqR quality index
+
+`IqR = Σ(conc_i ÷ MRL_i)` across every residue in a single sample.
+
+| Range | Category |
+|---|---|
+| 0 | Excellent |
+| 0 – 0.6 | Good |
+| 0.6 – 1.0 | Adequate |
+| > 1.0 | Inadequate |
+
+**Why it matters:** a sample can be fully compliant (no single residue over
+its own MRL) yet carry a heavy cumulative load. IqR captures that; the
+binary pass/fail verdict cannot. A rising Inadequate rate is a leading
+indicator of future violations.
+
+### Facility risk scorecard
+
+Facilities with **≥5 samples** are classified by combining violation
+history *with* cumulative residue burden:
+
+| Class | Meaning |
+|---|---|
+| **Healthy** | No violations, low inadequate-IqR rate |
+| **Watch** | No violations *yet*, but elevated inadequate-IqR rate |
+| **Risky** | Has violations, or a high inadequate-IqR rate regardless |
+
+**Watch is the point of this table.** A facility with a clean record but a
+rising residue load is invisible to violation-rate reporting — this is the
+insight the scorecard exists to surface.
+
+Tuning knobs (keyword args on `t_facility_scorecard`):
+`inadequate_watch_threshold=0.20`, `inadequate_risky_threshold=0.35`,
+`violation_risky_threshold_pct=10.0`, `min_samples=5`. These are starting
+values, not calibrated — tune against your real facility distribution.
+
+### Excluded entities
+
+`EXCLUDED_FACILITY_PATTERNS` filters `جمعية البطين الزراعية` and `الجامعة`
+out at the SQL layer (matched with `NOT LIKE '%pattern%'`). These are
+referral/institutional entries, not inspectable commercial establishments.
+
+**Note:** the exclusion applies to *all* statistics on the page, including
+total sample counts and compliance-rate denominators — not just the
+facility scorecard.
+
+---
+
+## 🎯 Inspection Priority (أولوية التفتيش)
+
+### Purpose
+
+A precomputed decision layer ranking municipalities, neighborhoods, and
+establishments by inspection priority, using Bayesian shrinkage, commodity
+risk, coverage gap, and trend — surfaced as a hierarchical
+municipality → neighborhood → establishment recommendation.
+
+Scores live in `risk_scores`, built by `scripts/build_risk_scores.py`.
+`modules/inspection_priority.py` is a **read layer only** — it computes
+nothing, so the text engine, voice pipeline, and Streamlit UI all share
+one source of truth.
+
+### The staleness problem, and the fix
+
+The recommendation used to be **frozen for 1–2 months**, changing only when
+new lab data arrived.
+
+Root cause: **no feedback loop.** When an inspector actually visited a
+flagged establishment, nothing recorded it. `days_since_last_sample` kept
+climbing, so the same name stayed top-ranked indefinitely — still flagged
+as "neglected" the day after being inspected.
+
+#### Fix #1 — Inspection feedback loop
+
+- New `inspections_log` table (self-creating on first write).
+- **"✅ تم التفتيش"** button per recommended establishment.
+- `effective_days_since()` takes the more recent of the last lab sample and
+  any logged visit — so a visit counts **immediately**, without waiting for
+  a `build_risk_scores.py` rebuild.
+- **Undo list** reads the last 10 logged visits from the database.
+  Deliberately *not* from `st.session_state`, which only survives the
+  current browser session and forgets everything but the last click.
+
+#### Fix #2 — Cooldown
+
+`_filter_cooldown()` suppresses any establishment logged within
+`COOLDOWN_DAYS` (default 7) from the recommendation pool, applied **before**
+CRP scoring. The cascade then recalculates and promotes the next-highest
+cluster.
+
+Expect the whole path to change, not just the establishment — logging one
+visit can shift the recommended neighborhood entirely, because CRP
+recomputes across the remaining pool.
+
+#### Fix #3 — Genuine motion, honestly scoped
+
+- **`municipality_trend()`** — 30-day window vs. the preceding 30 days,
+  requiring ≥5 samples in **both** windows.
+- **Days-since-last-inspection counter** per entity, ticking up daily.
+
+**Entity-level trend remains deliberately deferred.** Five months of sparse
+per-establishment data cannot support a reliable trend; a facility with 3
+samples would produce noise, not signal. This matches the existing
+reasoning behind computing `c_trend` at municipality level.
+
+### The map
+
+`modules/inspection_map.py` renders Buraydah neighborhoods with **colour
+intensity by risk score**, plus numbered markers tracing the visit route in
+nearest-neighbour order (adequate for 3–5 stops; no TSP solver needed).
+
+The map **complements** the hierarchy infographic, it does not replace it:
+
+| Component | Answers |
+|---|---|
+| Infographic | **Why** — the reasoning chain that makes the recommendation defensible |
+| Map | **How do I execute this today** — clustering, travel order |
+
+**No blinking.** Continuous blink animation was considered and rejected: it
+reads as unprofessional in a government context, conveys no priority
+ordering (everything blinks identically), and is an accessibility problem.
+Instead: colour intensity for priority, a **single 0.6s pulse** (not
+`infinite`) on "🆕 محدّث" badges for neighborhoods newly entering the top
+10 since the page was last opened.
+
+Coordinates live in `modules/buraydah_coords.py`
+(`BURAYDAH_NEIGHBORHOODS_COORDS`, ~34 neighborhoods). Neighborhoods absent
+from that dict are silently skipped — extend the dict to add coverage.
+
+### Safeguards retained
+
+- **Low-confidence alerts** — high-scoring establishments with too few
+  samples are excluded from the main recommendation but shown in a separate
+  expander rather than hidden entirely.
+- **CRP safety valve** — if a higher-CRP neighborhood exists outside the
+  chosen municipality, an explicit warning is shown.
+- **Manual overrides** — `risk_overrides` table (via
+  `set_manual_override.py`) survives `risk_scores` rebuilds; any boosted row
+  is marked and its reason appended, so no number changes without a visible
+  cause.
+
+---
+
+## Setup notes
+
+### DuckDB connection — important
+
+`get_duckdb_read()` and `get_duckdb_write()` **must return the same shared
+connection.** DuckDB refuses a second connection to the same file with a
+different config (`read_only=True` vs `False`) while the first is open —
+which is exactly what happens when a page holds a read-only connection
+across a render and then logs an inspection.
+
+The fix is a single `@st.cache_resource` read-write connection serving both
+functions. A read-write connection reads identically, so no existing call
+site changes.
+
+Consequence: **`log_inspection()` and `undo_inspection()` must not close the
+connection** — closing the shared object breaks DB access for every page for
+the rest of the session.
+
+This assumes single-process `streamlit run`. Multiple worker processes
+against one DuckDB file would hit DuckDB's single-writer limit — out of
+scope for the current deployment.
+
+### Page registration
+
+Both pages are called by the router as `page_func(api_client)`, so every
+entry point must accept that argument even when unused —
+`show_advanced_reports_page(api_client=None)`.
+
+### Season definition
+
+Winter = Dec/Jan/Feb, Spring = Mar/Apr/May, Summer = Jun/Jul/Aug,
+Autumn = Sep/Oct/Nov. Dates parse as **DD/MM/YYYY**.
+
+Reports only cover seasons present in the data — a partial season (e.g.
+data starting 5 Jan gives a Winter of Jan–Feb only) is reported as-is, so be
+careful comparing sample volumes against a full prior-year season.
+
+### Performance note
+
+`_render_level_table()` calls `effective_days_since()` per row via
+`.apply()`, each doing its own DB round-trip. Fine up to the current
+`top_n` ceiling of 50; batch into a single query if that ceiling is raised.

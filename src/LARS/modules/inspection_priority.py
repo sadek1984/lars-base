@@ -436,6 +436,11 @@ def get_recommended_route(min_confidence: str = "medium", top_n_establishments: 
         if est_df.empty:
             return {"found": False}
 
+        est_df = _filter_cooldown(est_df, c, db_path)
+        if est_df.empty:
+            return {"found": False,
+                    "reason": "كل المنشآت عالية الأولوية تمت زيارتها مؤخرًا"}
+
         threshold = _crp_threshold(est_df)
         est_df = est_df.copy()
         est_df["excess"] = (est_df["risk_score"] - threshold).clip(lower=0)
@@ -580,3 +585,270 @@ def component_breakdown(row: dict) -> pd.DataFrame:
     out["المساهمة في الدرجة"] = (out["القيمة (0-1)"] * out["الوزن"] * 100).round(1)
     out["القيمة (0-1)"] = out["القيمة (0-1)"].round(2)
     return out.sort_values("المساهمة في الدرجة", ascending=False)
+# -*- coding: utf-8 -*-
+"""
+ADD THESE to modules/inspection_priority.py (paste near the bottom, after
+component_breakdown, or wherever convenient — no existing function is
+modified, only appended to).
+
+Fix #1 — inspection feedback loop (log_inspection, get_last_inspection,
+         effective_days_since)
+Fix #2 — cooldown so the route cascade doesn't repeat the same
+         establishment every run (_filter_cooldown, wired into
+         get_recommended_route)
+Fix #3 — municipality-level trend (municipality_trend) — entity-level
+         trend stays correctly deferred; per-establishment sample counts
+         are too sparse to trust yet, per the existing w_trend design note
+"""
+
+INSPECTIONS_TABLE = "inspections_log"
+COOLDOWN_DAYS = 7  # an establishment served as today's top pick won't be
+                   # re-served for this many days — forces the cascade to
+                   # cycle through the risk tail instead of repeating names
+
+
+# ============================================================================
+# Fix #1 — inspection feedback loop
+# ============================================================================
+# risk_scores only updates when build_risk_scores.py re-runs (every 1-2
+# months). If an inspector visits a flagged establishment today, nothing in
+# the system knows — days_since_last_sample keeps climbing until the next
+# rebuild, so the same name stays top-ranked even the day after it was
+# checked. inspections_log is the write side of the fix: a logged visit is
+# combined with days_since_last_sample at READ time (effective_days_since),
+# so a visit "counts" immediately without waiting for a rebuild.
+#
+# IMPORTANT: unlike every other function in this module, log_inspection()
+# needs a WRITE connection. This module's own _resolve()/_connect() opens
+# read_only=True by design (see DEFAULT_DB usage above) — so when no con
+# is passed, this reaches for data_access.get_duckdb_write() instead of
+# _connect().
+
+def log_inspection(entity_name: str, level: str = "establishment",
+                   municipality: str = None, neighborhood: str = None,
+                   inspector_name: str = None, note: str = None,
+                   con=None) -> int:
+    """Call this from the '✅ تم التفتيش' button. Self-creates the table on
+    first use so no separate migration step is required. Returns the new
+    row's id, so the UI can offer an undo.
+
+    NOTE: does NOT close the connection when it opens its own — after the
+    data_access.py patch, get_duckdb_write() returns the single shared,
+    cached connection for the whole app process. Closing it here would
+    break every other page's DB access for the rest of the session."""
+    c = con
+    if c is None:
+        from modules.data_access import get_duckdb_write
+        c = get_duckdb_write()
+    c.execute(f"""
+        CREATE TABLE IF NOT EXISTS {INSPECTIONS_TABLE} (
+            id              INTEGER,
+            level           VARCHAR,
+            entity_name     VARCHAR,
+            municipality    VARCHAR,
+            neighborhood    VARCHAR,
+            inspector_name  VARCHAR,
+            note            VARCHAR,
+            inspected_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    next_id = c.execute(
+        f"SELECT COALESCE(MAX(id), 0) + 1 FROM {INSPECTIONS_TABLE}"
+    ).fetchone()[0]
+    c.execute(f"""
+        INSERT INTO {INSPECTIONS_TABLE}
+            (id, level, entity_name, municipality, neighborhood,
+             inspector_name, note, inspected_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    """, [next_id, level, entity_name, municipality, neighborhood,
+         inspector_name, note])
+    return next_id
+
+
+def undo_inspection(inspection_id: int, con=None) -> None:
+    """Deletes a single logged visit by id — for the '↩️ تراجع' button
+    right after logging, so you can test the flow without leaving
+    permanent test data in inspections_log."""
+    c = con
+    if c is None:
+        from modules.data_access import get_duckdb_write
+        c = get_duckdb_write()
+    c.execute(f"DELETE FROM {INSPECTIONS_TABLE} WHERE id = ?", [inspection_id])
+
+
+def get_recent_inspections(limit: int = 10, level: str = "establishment",
+                           db_path: str = None, con=None) -> pd.DataFrame:
+    """Reads recently logged visits straight from inspections_log, not from
+    st.session_state — session state only remembers the single most recent
+    thing logged in the CURRENT browser session, so it disappears the
+    moment you log a second entity or reload the page, even though the row
+    is still sitting in the database. This is what the undo list in the UI
+    should actually be built on, so any of the last N visits can be
+    undone, not just the literal last click."""
+    c, should_close = _resolve(con, db_path)
+    try:
+        df = c.execute(f"""
+            SELECT id, entity_name, municipality, neighborhood, inspected_at
+            FROM {INSPECTIONS_TABLE}
+            WHERE level = ?
+            ORDER BY inspected_at DESC
+            LIMIT ?
+        """, [level, limit]).df()
+        return df
+    except Exception:
+        return pd.DataFrame(columns=["id", "entity_name", "municipality",
+                                     "neighborhood", "inspected_at"])
+    finally:
+        if should_close:
+            c.close()
+
+
+def get_last_inspection(entity_name: str, level: str = "establishment",
+                        db_path: str = None, con=None):
+    """Returns the most recent logged visit timestamp, or None if the
+    table doesn't exist yet or no visit was ever logged — safe to call
+    before log_inspection() has ever run."""
+    c, should_close = _resolve(con, db_path)
+    try:
+        row = c.execute(f"""
+            SELECT MAX(inspected_at) FROM {INSPECTIONS_TABLE}
+            WHERE level = ? AND entity_name = ?
+        """, [level, entity_name]).fetchone()
+        return row[0] if row else None
+    except Exception:
+        return None  # table not created yet — normal on a fresh deploy
+    finally:
+        if should_close:
+            c.close()  # OK here — this path uses _resolve()'s own local
+                       # connection when con is None, not the shared one
+
+
+def effective_days_since(row: dict, db_path: str = None, con=None) -> int:
+    """Combines risk_scores.days_since_last_sample (lab-driven, only
+    refreshed on rebuild) with any more recently logged manual visit —
+    whichever is more recent wins. This is what the UI should display
+    instead of the raw column, so a visited establishment immediately
+    shows as recently seen rather than waiting for the next rebuild."""
+    base_days = int(row.get("days_since_last_sample", 9999))
+    last_visit = get_last_inspection(
+        row["entity_name"], row.get("level", "establishment"),
+        db_path=db_path, con=con,
+    )
+    if last_visit is None:
+        return base_days
+    if isinstance(last_visit, str):
+        last_visit = pd.to_datetime(last_visit)
+    visit_days = (pd.Timestamp.now() - pd.Timestamp(last_visit)).days
+    return min(base_days, max(visit_days, 0))
+
+
+# ============================================================================
+# Fix #2 — cooldown filter, wired into get_recommended_route
+# ============================================================================
+
+def _filter_cooldown(est_df: pd.DataFrame, con, db_path=None,
+                     cooldown_days: int = COOLDOWN_DAYS) -> pd.DataFrame:
+    """Drops establishments logged within cooldown_days. Fails open (returns
+    est_df unchanged) if inspections_log doesn't exist yet — a fresh deploy
+    with no logged visits should behave exactly like before this feature."""
+    try:
+        recent = con.execute(f"""
+            SELECT DISTINCT entity_name FROM {INSPECTIONS_TABLE}
+            WHERE level = 'establishment'
+              AND inspected_at >= CURRENT_TIMESTAMP - INTERVAL '{int(cooldown_days)} days'
+        """).df()["entity_name"].tolist()
+    except Exception:
+        return est_df
+    if not recent:
+        return est_df
+    return est_df[~est_df["entity_name"].isin(recent)]
+
+
+# NOTE: apply this inside get_recommended_route(), right after the existing
+#   est_df = get_top(level="establishment", n=100000, min_confidence=min_confidence, con=c)
+#   if est_df.empty:
+#       return {"found": False}
+# insert:
+#   est_df = _filter_cooldown(est_df, c, db_path)
+#   if est_df.empty:
+#       return {"found": False, "reason": "all high-priority establishments recently inspected"}
+#
+# Everything downstream (threshold, CRP, cascade) then naturally operates
+# on the establishment pool with recently-visited entities already removed,
+# so the next-highest scorer surfaces without any other change.
+
+
+# ============================================================================
+# Fix #3 — municipality-level trend
+# ============================================================================
+# Deliberately NOT per-establishment — matches the existing design note in
+# this file (w_trend / c_trend are already computed at municipality level
+# in build_risk_scores.py for the same reason: per-establishment sample
+# counts are too sparse over 5 months to trust a trend). This reads
+# chemistry_tidy directly (same schema confirmed working in
+# modules/advanced_reports.py: "اسم البلدية", "التاريخ" as %d/%m/%Y,
+# sample_result containing 'Compliant'/'Non-Compliant').
+
+def municipality_trend(window_days: int = 30, min_n: int = 5,
+                       db_path: str = None, con=None) -> pd.DataFrame:
+    """Compares each municipality's violation rate in the most recent
+    window_days against the window immediately before it. Only municipalities
+    with >= min_n samples in BOTH windows are returned — enough volume at
+    this level (unlike per-establishment) to trust the comparison.
+
+    Returns: municipality, prior_rate_pct, latest_rate_pct, delta_pp,
+    prior_n, latest_n — sorted worst-trending first.
+    """
+    c, should_close = _resolve(con, db_path)
+    try:
+        df = c.execute("""
+            WITH parsed AS (
+                SELECT *, strptime("التاريخ", '%d/%m/%Y') AS d
+                FROM chemistry_tidy
+                WHERE "التاريخ" IS NOT NULL
+            ),
+            windows AS (
+                SELECT
+                    "اسم البلدية" AS municipality,
+                    CASE
+                        WHEN d >= CURRENT_DATE - INTERVAL (?) DAY THEN 'latest'
+                        WHEN d >= CURRENT_DATE - INTERVAL (2 * ?) DAY
+                         AND d <  CURRENT_DATE - INTERVAL (?) DAY THEN 'prior'
+                        ELSE NULL
+                    END AS bucket,
+                    sample_result
+                FROM parsed
+            )
+            SELECT municipality, bucket, COUNT(*) AS n,
+                   SUM(CASE WHEN sample_result LIKE '%Non-Compliant%' THEN 1 ELSE 0 END) AS violations
+            FROM windows
+            WHERE bucket IS NOT NULL AND municipality IS NOT NULL
+            GROUP BY municipality, bucket
+        """, [window_days, window_days, window_days]).df()
+    except Exception:
+        return pd.DataFrame(columns=["municipality", "prior_rate_pct", "latest_rate_pct",
+                                     "delta_pp", "prior_n", "latest_n"])
+    finally:
+        if should_close:
+            c.close()
+
+    if df.empty:
+        return pd.DataFrame(columns=["municipality", "prior_rate_pct", "latest_rate_pct",
+                                     "delta_pp", "prior_n", "latest_n"])
+
+    piv = df.pivot(index="municipality", columns="bucket", values=["n", "violations"]).fillna(0)
+    rows = []
+    for muni in piv.index:
+        prior_n = piv.loc[muni, ("n", "prior")] if ("n", "prior") in piv.columns else 0
+        latest_n = piv.loc[muni, ("n", "latest")] if ("n", "latest") in piv.columns else 0
+        if prior_n < min_n or latest_n < min_n:
+            continue
+        prior_v = piv.loc[muni, ("violations", "prior")] if ("violations", "prior") in piv.columns else 0
+        latest_v = piv.loc[muni, ("violations", "latest")] if ("violations", "latest") in piv.columns else 0
+        prior_rate = round(prior_v / prior_n * 100, 1)
+        latest_rate = round(latest_v / latest_n * 100, 1)
+        rows.append([muni, prior_rate, latest_rate, round(latest_rate - prior_rate, 1),
+                    int(prior_n), int(latest_n)])
+    out = pd.DataFrame(rows, columns=["municipality", "prior_rate_pct", "latest_rate_pct",
+                                      "delta_pp", "prior_n", "latest_n"])
+    return out.sort_values("delta_pp", ascending=False).reset_index(drop=True)
