@@ -109,7 +109,7 @@ docker compose down
 docker compose up --build
 
 # Cloud Run
-streamlit run src/LARS/app_new.
+streamlit run src/LARS/app_new.py
 
 # local run
 LARS_API_BASE_URL=http://localhost:8090 streamlit run src/LARS/app_new.py
