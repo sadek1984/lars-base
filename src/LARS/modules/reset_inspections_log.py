@@ -17,7 +17,7 @@ import duckdb
 
 DB_PATH = os.environ.get(
     "LARS_DUCKDB_PATH",
-    os.path.join(os.path.dirname(__file__), "..", "data", "lars_data.duckdb"),
+    os.path.join(os.path.dirname(__file__), "..", "data", "lars_data_demo.duckdb"),
 )
 
 

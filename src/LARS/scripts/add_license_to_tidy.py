@@ -29,7 +29,7 @@ import numpy as np
 import pandas as pd
 
 _HERE = Path(__file__).resolve().parent
-DEFAULT_DB = str(_HERE.parent / "data" / "lars_data.duckdb")
+DEFAULT_DB = str(_HERE.parent / "data" / "lars_data_demo.duckdb")
 TABLE = "chemistry_tidy"
 LIC_COL = "رقم الرخصة"
 CODE_COL = "كود العينة"

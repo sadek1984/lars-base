@@ -33,7 +33,7 @@ from pathlib import Path
 import duckdb
 
 _HERE = Path(__file__).resolve().parent
-DEFAULT_DB = str(_HERE.parent / "data" / "lars_data.duckdb")
+DEFAULT_DB = str(_HERE.parent / "data" / "lars_data_demo.duckdb")
 
 
 def _ensure_table(con):

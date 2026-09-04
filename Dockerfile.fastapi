@@ -5,5 +5,5 @@ RUN pip install --no-cache-dir fastapi uvicorn aiohttp duckdb pandas tabulate op
 COPY src/LARS /app/src/LARS
 COPY lars_service.py /app/lars_service.py
 ENV PYTHONPATH=/app/src/LARS
-ENV LARS_DUCKDB_PATH=/app/src/LARS/data/lars_data.duckdb
+ENV LARS_DUCKDB_PATH=/app/src/LARS/data/lars_data_demo.duckdb
 CMD ["uvicorn", "lars_service:app", "--host", "0.0.0.0", "--port", "8080"]

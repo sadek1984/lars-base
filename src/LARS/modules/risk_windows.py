@@ -104,9 +104,9 @@ def get_residue_data_for_sample(sample_type_arabic: str) -> List[Dict[str, Any]]
         
         # Find database path
         possible_paths = [
-            Path(__file__).parent.parent / 'data' / 'lars_data.duckdb',
-            Path(__file__).parent.parent / 'lars_data.duckdb',
-            Path('/app/src/LARS/lars_data.duckdb'),
+            Path(__file__).parent.parent / 'data' / 'lars_data_demo.duckdb',
+            Path(__file__).parent.parent / 'lars_data_demo.duckdb',
+            Path('/app/src/LARS/lars_data_demo.duckdb'),
         ]
         
         db_path = None

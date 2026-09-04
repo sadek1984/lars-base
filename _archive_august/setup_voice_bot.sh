@@ -25,7 +25,7 @@ fi
 
 # 4. التحقق من قاعدة البيانات
 echo "🗄️ التحقق من قاعدة البيانات..."
-if [ -f "/Users/a12/Buraidah_lars/src/LARS/data/lars_data.duckdb" ]; then
+if [ -f "/Users/a12/Buraidah_lars/src/LARS/data/lars_data_demo.duckdb" ]; then
     echo "✅ قاعدة البيانات موجودة"
 else
     echo "⚠️ قاعدة البيانات غير موجودة! قم بتشغيل migrate_db.py أولاً"

@@ -22,7 +22,7 @@ stt_model = WhisperModel(
 print("✅ Whisper model loaded!")
 
 client = OpenAI(base_url="http://localhost:11434/v1", api_key="not-needed")
-DB_PATH = "/Users/a12/Buraidah_lars/src/LARS/data/lars_data.duckdb"
+DB_PATH = "/Users/a12/Buraidah_lars/src/LARS/data/lars_data_demo.duckdb"
 
 # ============================================================
 # Constants & Dictionaries

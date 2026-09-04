@@ -48,7 +48,7 @@ class LARSDatabase:
         """
         if db_path is None:
             # Database is in data/ folder (../data/ from core/)
-            db_path = Path(__file__).parent.parent / 'data' / 'lars_data.duckdb'
+            db_path = Path(__file__).parent.parent / 'data' / 'lars_data_demo.duckdb'
         
         self.db_path = Path(db_path)
         self.read_only = read_only

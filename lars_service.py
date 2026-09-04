@@ -25,7 +25,7 @@ def get_lars_engine():
     if _engine is None:
         if not LARS_AVAILABLE:
             raise Exception("CoreQueryEngine not available")
-        db_path = os.environ.get("LARS_DUCKDB_PATH", "/app/src/LARS/data/lars_data.duckdb")
+        db_path = os.environ.get("LARS_DUCKDB_PATH", "/app/src/LARS/data/lars_data_demo.duckdb")
         logger.info(f"Initializing CoreQueryEngine with db_path={db_path}")
         _engine = CoreQueryEngine(db_path=db_path, enable_llm_fallback=False)
     return _engine
@@ -46,7 +46,7 @@ async def query_lars(request: QueryRequest):
                 params = extract_priority_params(request.query)
                 level = "neighborhood" if kind == "urgent_neighborhood" else params["level"]
                 db_path = os.environ.get("LARS_DUCKDB_PATH",
-                                          "/app/src/LARS/data/lars_data.duckdb")
+                                          "/app/src/LARS/data/lars_data_demo.duckdb")
                 df = get_top(level=level, n=params["top_n"],
                             min_confidence="medium", db_path=db_path)
                 if df.empty:

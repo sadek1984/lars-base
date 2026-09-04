@@ -9,7 +9,7 @@ Does two things:
 import duckdb
 from pathlib import Path
 
-DB = Path("src/LARS/data/lars_data.duckdb")
+DB = Path("src/LARS/data/lars_data_demo.duckdb")
 
 if not DB.exists():
     raise FileNotFoundError(f"Database not found: {DB}")

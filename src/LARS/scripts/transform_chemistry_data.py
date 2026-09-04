@@ -25,7 +25,7 @@ def transform_chemistry_to_tidy():
     Keeps all original columns and properly splits contaminant data
     """
     
-    db_path = Path(__file__).parent.parent / 'data' / 'lars_data.duckdb'
+    db_path = Path(__file__).parent.parent / 'data' / 'lars_data_demo.duckdb'
     
     print("=" * 60)
     print("🔄 LARS Chemistry Data Transformation (v2)")
@@ -292,7 +292,7 @@ def transform_chemistry_to_tidy():
 def test_queries():
     """Test the transformed table with sample queries"""
     
-    db_path = Path(__file__).parent.parent / 'data' / 'lars_data.duckdb'
+    db_path = Path(__file__).parent.parent / 'data' / 'lars_data_demo.duckdb'
     
     print("\n🧪 Testing Chemistry_Tidy Queries...")
     print("-" * 40)

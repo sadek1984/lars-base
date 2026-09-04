@@ -32,7 +32,7 @@ import pandas as pd
 
 from pathlib import Path
 _HERE = Path(__file__).resolve().parent                 # src/LARS/scripts
-DEFAULT_DB = str(_HERE.parent / "data" / "lars_data.duckdb")
+DEFAULT_DB = str(_HERE.parent / "data" / "lars_data_demo.duckdb")
 SOURCE_TABLE = "chemistry_tidy"
 TARGET_TABLE = "risk_scores"
 ENGINE_VERSION = "risk-v1"

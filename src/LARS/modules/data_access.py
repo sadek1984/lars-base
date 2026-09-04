@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 _MODULE_DIR = Path(__file__).resolve().parent          # src/LARS/modules/
 _LARS_ROOT = _MODULE_DIR.parent                        # src/LARS/
 _DATA_DIR = _LARS_ROOT / "data"
-_DUCKDB_PATH = _DATA_DIR / "lars_data.duckdb"
+_DUCKDB_PATH = _DATA_DIR / "lars_data_demo.duckdb"
 _EXCEL_PATH = _DATA_DIR / "6_months.xlsx"
 
 
@@ -108,7 +108,7 @@ def _shared_connection():
 
 def _resolve_duckdb_path() -> Optional[Path]:
     """Find the DuckDB database file."""
-    return _resolve_data_path("lars_data.duckdb")
+    return _resolve_data_path("lars_data_demo.duckdb")
 
 
 def get_duckdb_read() -> Optional[duckdb.DuckDBPyConnection]:

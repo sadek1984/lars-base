@@ -1,5 +1,5 @@
 import duckdb
-con = duckdb.connect('/Users/a12/lars-base/src/LARS/data/lars_data.duckdb', read_only=True)
+con = duckdb.connect('/Users/a12/lars-base/src/LARS/data/lars_data_demo.duckdb', read_only=True)
 
 total = con.execute('SELECT COUNT(*) FROM chemistry_tidy').fetchone()[0]
 matching = con.execute('''

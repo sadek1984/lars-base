@@ -8,7 +8,7 @@ Usage:
 
 This script:
 1. Reads the existing Excel file
-2. Creates a DuckDB database file (lars_data.duckdb)
+2. Creates a DuckDB database file (lars_data_demo.duckdb)
 3. Creates a 'samples' table with all the data
 4. Verifies the migration was successful
 
@@ -26,7 +26,7 @@ def migrate_excel_to_duckdb(force=False):
     
     # Configuration (files are in ../data/ folder)
     excel_file = Path(__file__).parent.parent / 'data' / '6_months.xlsx'
-    db_file = Path(__file__).parent.parent / 'data' / 'lars_data.duckdb'
+    db_file = Path(__file__).parent.parent / 'data' / 'lars_data_demo.duckdb'
     
     print("=" * 60)
     print("🔄 LARS Database Migration: Excel → DuckDB")
@@ -130,7 +130,7 @@ def migrate_chemistry_sheet():
     
     # Configuration (files are in ../data/ folder)
     excel_file = Path(__file__).parent.parent / 'data' / 'chemistry_translated.xlsx'
-    db_file = Path(__file__).parent.parent / 'data' / 'lars_data.duckdb'
+    db_file = Path(__file__).parent.parent / 'data' / 'lars_data_demo.duckdb'
     sheet_name = "Chemistry"  # Chemistry sheet in translated dataset
     
     print("=" * 60)
@@ -234,7 +234,7 @@ def migrate_chemistry_tidy():
     IMPORTANT: Includes ALL samples, even those without pesticide detections.
     """
     
-    db_file = Path(__file__).parent.parent / 'data' / 'lars_data.duckdb'
+    db_file = Path(__file__).parent.parent / 'data' / 'lars_data_demo.duckdb'
     
     print("=" * 60)
     print("🧪 LARS Chemistry Tidy Format Migration")
@@ -536,7 +536,7 @@ def migrate_chemistry_tidy():
 def test_database():
     """Test the database with sample queries"""
     
-    db_file = Path(__file__).parent.parent / 'data' / 'lars_data.duckdb'
+    db_file = Path(__file__).parent.parent / 'data' / 'lars_data_demo.duckdb'
     
     if not db_file.exists():
         print("❌ Database not found. Run migration first.")

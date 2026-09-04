@@ -16,7 +16,7 @@ import duckdb
 import pandas as pd
 
 _HERE = Path(__file__).resolve().parent                 # src/LARS/modules
-DEFAULT_DB = str(_HERE.parent / "data" / "lars_data.duckdb")
+DEFAULT_DB = str(_HERE.parent / "data" / "lars_data_demo.duckdb")
 TABLE = "risk_scores"
 
 _AR_NORM = str.maketrans({

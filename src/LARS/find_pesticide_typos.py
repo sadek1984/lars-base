@@ -1,7 +1,7 @@
 import duckdb
 from difflib import get_close_matches
 
-con = duckdb.connect('src/LARS/data/lars_data.duckdb', read_only=True)
+con = duckdb.connect('src/LARS/data/lars_data_demo.duckdb', read_only=True)
 names = [r[0] for r in con.execute("SELECT DISTINCT pesticide_name FROM chemistry_tidy WHERE pesticide_name IS NOT NULL").fetchall()]
 con.close()
 

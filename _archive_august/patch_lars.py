@@ -181,7 +181,7 @@ sys.path.insert(0, "src/LARS")
 from modules.core_query_engine import CoreQueryEngine
 
 engine = CoreQueryEngine(
-    db_path="src/LARS/data/lars_data.duckdb",
+    db_path="src/LARS/data/lars_data_demo.duckdb",
     enable_llm_fallback=False
 )
 for q in ["how many tomato samples",

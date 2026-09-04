@@ -44,7 +44,7 @@ from pathlib import Path
 #   /Users/a12/lars-base/src/LARS/core_query_engine.py
 sys.path.insert(0, "/Users/a12/lars-base/src/LARS")  # <-- change if needed
 
-DB_PATH = "/Users/a12/lars-base/src/LARS/data/lars_data.duckdb"  # <-- change if needed
+DB_PATH = "/Users/a12/lars-base/src/LARS/data/lars_data_demo.duckdb"  # <-- change if needed
 
 
 def get_engine():

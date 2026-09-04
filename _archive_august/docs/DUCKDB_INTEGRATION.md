@@ -37,7 +37,7 @@ LARS now supports **dual query engines**: SQL (DuckDB) and Pandas, with SQL as t
 
 ```
 /Users/a12/Buraidah_lars/src/LARS/
-├── lars_data.duckdb          ← 🆕 Database file (340 records)
+├── lars_data_demo.duckdb          ← 🆕 Database file (340 records)
 ├── migrate_db.py             ← 🆕 Migration script
 ├── db_helper.py              ← 🆕 Database helper module
 └── app.py                    ← ✏️ Updated with SQL support
@@ -160,7 +160,7 @@ Add this to `docker-compose.yml` to persist the database:
 
 ```yaml
 volumes:
-  - ./src/LARS/lars_data.duckdb:/app/src/LARS/lars_data.duckdb
+  - ./src/LARS/lars_data_demo.duckdb:/app/src/LARS/lars_data_demo.duckdb
 ```
 
 ---

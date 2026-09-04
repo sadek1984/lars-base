@@ -27,7 +27,7 @@ stt_model = WhisperModel(
 )
 print("✅ Whisper model loaded!")
 
-DB_PATH = "/Users/a12/Buraidah_lars/src/LARS/data/lars_data.duckdb"
+DB_PATH = "/Users/a12/Buraidah_lars/src/LARS/data/lars_data_demo.duckdb"
 # Using CoreQueryEngine - same logic as ai_assistant.py without Streamlit dependencies
 processor = CoreQueryEngine(DB_PATH)
 print("✅ CoreQueryEngine initialized!")

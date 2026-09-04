@@ -6,7 +6,7 @@ Run this after every data reload — sample_summary is a SNAPSHOT, not a
 live view, and will go stale if chemistry_tidy changes underneath it.
 
 Usage:
-    python build_sample_summary.py [--db-path /path/to/lars_data.duckdb]
+    python build_sample_summary.py [--db-path /path/to/lars_data_demo.duckdb]
 """
 import argparse
 import duckdb

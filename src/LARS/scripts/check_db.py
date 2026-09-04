@@ -20,7 +20,7 @@ def main():
     parser.add_argument('--rows', type=int, default=5, help="Number of rows to display")
     args = parser.parse_args()
     
-    db_path = Path(__file__).parent.parent / 'data' / 'lars_data.duckdb'
+    db_path = Path(__file__).parent.parent / 'data' / 'lars_data_demo.duckdb'
     
     if not db_path.exists():
         print(f"❌ Database not found: {db_path}")

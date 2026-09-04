@@ -829,7 +829,7 @@ def show_chat_page(api_client):
         
         # Check if DuckDB database exists
         # Note: ai_assistant.py is in modules/, database is in ../data/
-        db_path = Path(__file__).parent.parent / 'data' / 'lars_data.duckdb'
+        db_path = Path(__file__).parent.parent / 'data' / 'lars_data_demo.duckdb'
         db_exists = db_path.exists()
 
         
@@ -1531,7 +1531,7 @@ def load_and_transform_data():
             st.session_state.df_tidy = df_tidy
             
             # Save to DuckDB
-            db_path = os.path.join(os.path.dirname(__file__), 'data', 'lars_data.duckdb')
+            db_path = os.path.join(os.path.dirname(__file__), 'data', 'lars_data_demo.duckdb')
             if os.path.exists(db_path):
                 try:
                     con = duckdb.connect(db_path, read_only=False)

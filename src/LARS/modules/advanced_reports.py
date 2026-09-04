@@ -49,7 +49,7 @@ except ImportError:
     def _get_conn():
         path = os.environ.get(
             "LARS_DUCKDB_PATH",
-            os.path.join(os.path.dirname(__file__), "..", "data", "lars_data.duckdb"),
+            os.path.join(os.path.dirname(__file__), "..", "data", "lars_data_demo.duckdb"),
         )
         return duckdb.connect(path, read_only=True)
 

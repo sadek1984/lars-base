@@ -24,11 +24,11 @@ After refactoring the code into modules, the AI Assistant was not responding to 
 - **Issue**: After moving to `modules/` folder, the path calculation was wrong:
   ```python
   # OLD: 
-  db_path = Path(__file__).parent / 'data' / 'lars_data.duckdb'
+  db_path = Path(__file__).parent / 'data' / 'lars_data_demo.duckdb'
   # This would look in: /src/LARS/modules/data/ ❌
   
   # NEW:
-  db_path = Path(__file__).parent.parent / 'data' / 'lars_data.duckdb'  
+  db_path = Path(__file__).parent.parent / 'data' / 'lars_data_demo.duckdb'  
   # This correctly looks in: /src/LARS/data/ ✅
   ```
 - **Result**: Database detection now works correctly
@@ -58,7 +58,7 @@ if 'quick_query' in st.session_state and st.session_state.quick_query:
 #### Change 3: Fixed Database Path (Line 2073)
 ```python
 # Changed from parent to parent.parent
-db_path = Path(__file__).parent.parent / 'data' / 'lars_data.duckdb'
+db_path = Path(__file__).parent.parent / 'data' / 'lars_data_demo.duckdb'
 ```
 
 ## Database Migration Completed ✅
@@ -68,7 +68,7 @@ Successfully migrated data to DuckDB:
 - **Chemistry table**: 638 records  
 - **Chemistry_tidy table**: 1,559 records
 - **Database size**: 3.0 MB
-- **Location**: `/src/LARS/data/lars_data.duckdb`
+- **Location**: `/src/LARS/data/lars_data_demo.duckdb`
 
 ## Testing Instructions
 
@@ -138,7 +138,7 @@ streamlit run src/LARS/app.py
 ```
 
 Common issues to verify:
-1. ✅ Database exists: `ls -lh src/LARS/data/lars_data.duckdb`
+1. ✅ Database exists: `ls -lh src/LARS/data/lars_data_demo.duckdb`
 2. ✅ OpenAI API key loaded: Look for "✅ Loaded OPENAI_API_KEY" in terminal
 3. ✅ Data loaded: Check for session state initialization messages
 
