@@ -6,7 +6,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("lars_service")
-LARS_SRC = "/app/src/LARS"
+LARS_SRC = os.environ.get(
+    "LARS_SRC",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "src", "LARS")
+)
 if LARS_SRC not in sys.path:
     sys.path.insert(0, LARS_SRC)
 try:
@@ -25,7 +28,7 @@ def get_lars_engine():
     if _engine is None:
         if not LARS_AVAILABLE:
             raise Exception("CoreQueryEngine not available")
-        db_path = os.environ.get("LARS_DUCKDB_PATH", "/app/src/LARS/data/lars_data_demo.duckdb")
+        db_path = os.environ.get("LARS_DUCKDB_PATH", os.path.join(LARS_SRC, "data", "lars_data_demo.duckdb"))
         logger.info(f"Initializing CoreQueryEngine with db_path={db_path}")
         _engine = CoreQueryEngine(db_path=db_path, enable_llm_fallback=False)
     return _engine
