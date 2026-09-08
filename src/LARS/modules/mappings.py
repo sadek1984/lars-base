@@ -84,6 +84,8 @@ PESTICIDE_AR_TO_EN: Dict[str, str] = {
     "بايفنثرن": "bifenthrin",
     "بايفنثرين": "bifenthrin",
     "البايفنثرن": "bifenthrin",
+    "بايفينثرين": "bifenthrin",      # ← add: extra ي variant (فين vs فن)
+    "البايفينثرين": "bifenthrin",
     # Buprofezin
     "بوبروفيزين": "buprofezin",
     "بابروفيزن": "buprofezin",
@@ -1017,19 +1019,22 @@ CATEGORY_AR: Dict[str, List[str]] = {
 
 # English query keyword → "نوع العينة" DB value used in _detect_sample_types().
 # Add plural forms alongside singular so queries like "vegetables" match.
-CATEGORY_EN: Dict[str, str] = {
-    "vegetable":  "Vegetables",
-    "vegetables": "Vegetables",
-    "fruit":      "Fruits",
-    "fruits":     "Fruits",
-    "spice":      "Spices",
-    "spices":     "Spices",
-    "nut":        "Nuts",
-    "nuts":       "Nuts",
-    "grain":      "Grains",
-    "grains":     "Grains",
-    "leafy":      "Leafy Greens",
-    "dates":      "Dates",
+CATEGORY_EN = {
+    'vegetable': 'Vegetables', 'vegetables': 'Vegetables',
+    'fruit': 'Fruits', 'fruits': 'Fruits',
+    'spice': 'Spices', 'spices': 'Spices',
+    'nut': 'Nuts', 'nuts': 'Nuts',
+    'grain': 'Grains', 'grains': 'Grains',
+    'leafy': 'Leafy Greens', 'dates': 'Dates',
+    # Arabic — was missing entirely, so Arabic-only category queries
+    # like "الخضروات اللي فيها بايفينثرين" never resolved a category.
+    'خضار': 'Vegetables', 'الخضار': 'Vegetables',
+    'خضروات': 'Vegetables', 'الخضروات': 'Vegetables',
+    'فواكه': 'Fruits', 'الفواكه': 'Fruits', 'فاكهة': 'Fruits',
+    'توابل': 'Spices', 'التوابل': 'Spices', 'بهارات': 'Spices',
+    'مكسرات': 'Nuts', 'المكسرات': 'Nuts',
+    'حبوب': 'Grains', 'الحبوب': 'Grains',
+    'ورقيات': 'Leafy Greens', 'الورقيات': 'Leafy Greens',
 }
 
 # ============================================================================
@@ -1090,3 +1095,36 @@ NEIGHBORHOOD_CORRECTIONS_NORM: Dict[str, str] = _build_norm_dict_with_al_variant
 PESTICIDE_AR_TO_EN_NORM_NOSPACE: Dict[str, str] = {
     k.replace(" ", ""): v for k, v in PESTICIDE_AR_TO_EN_NORM.items()
 }
+
+try:
+    from rapidfuzz import fuzz as _fuzz
+    _HAS_RAPIDFUZZ = True
+except ImportError:
+    _HAS_RAPIDFUZZ = False
+    import difflib
+
+
+def fuzzy_match_pesticide_ar(query_normalized_nospace: str, threshold: int = 82) -> Optional[str]:
+    """
+    Fuzzy phonetic match for ASR-transliterated pesticide names.
+
+    HUMAIN (and other ASR) transliterate Latin pesticide names into Arabic
+    phonetically, inserting/dropping letters differently each time — e.g.
+    'imidacloprid' is دictionary-spelled 'اميداكلوبريد' but one ASR pass
+    produced 'اميداكولوبرايد' (extra و, extra ا). Exact and space-insensitive
+    matching can't catch letter insertions/drops; only approximate string
+    matching can. Checked LAST, after every exact match fails — it's the
+    least precise and most expensive step, and short strings give unreliable
+    fuzzy scores, so keys under 6 chars are skipped entirely.
+    """
+    best_match, best_score = None, 0
+    for ar_key, en_val in PESTICIDE_AR_TO_EN_NORM_NOSPACE.items():
+        if len(ar_key) < 6:
+            continue
+        if _HAS_RAPIDFUZZ:
+            score = _fuzz.partial_ratio(ar_key, query_normalized_nospace)
+        else:
+            score = difflib.SequenceMatcher(None, ar_key, query_normalized_nospace).ratio() * 100
+        if score > best_score:
+            best_score, best_match = score, en_val
+    return best_match if best_score >= threshold else None

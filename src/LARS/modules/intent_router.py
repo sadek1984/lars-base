@@ -69,7 +69,8 @@ class Intent(Enum):
 
     # ── Pesticide queries ──
     FIND_PESTICIDE_IN_SAMPLE = auto()    # pesticide X in sample Y
-    FIND_PESTICIDE_ALL = auto()          # search for pesticide everywhere
+    FIND_PESTICIDE_ALL = auto()   
+    FIND_PESTICIDE_IN_CATEGORY = auto()  # pesticide within a food category (no explicit samples)       # search for pesticide everywhere
     LIST_PESTICIDES_IN_SAMPLE = auto()   # all pesticides in sample type
     PESTICIDE_STATISTICS = auto()        # stats for a pesticide
 
@@ -415,7 +416,9 @@ class IntentRouter:
             return Intent.FACILITY_SEARCH
         if self._has_any(query, self._recipient_keywords):
             return Intent.RECIPIENT_SEARCH
-
+        # ── 8b. Pesticide + category (no explicit samples) ──
+        if has_pesticide and has_category and not has_samples:
+            return Intent.FIND_PESTICIDE_IN_CATEGORY
         # ── 9. Pesticide in all samples ──
         if has_pesticide and not has_samples:
             if self._has_any(query, self._search_keywords):

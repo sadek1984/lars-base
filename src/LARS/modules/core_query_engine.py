@@ -72,6 +72,16 @@ _PERIOD_UNIT_MAP = {
     'شهر': 'month', 'شهور': 'month', 'اشهر': 'month', 'أشهر': 'month', 'month': 'month', 'months': 'month',
     'سنة': 'year', 'سنوات': 'year', 'عام': 'year', 'أعوام': 'year', 'year': 'year', 'years': 'year',
 }
+_ARABIC_NUMBER_WORDS = {
+    'ثلاثة': '3', 'ثلاث': '3',
+    'أربعة': '4', 'اربعة': '4', 'أربع': '4', 'اربع': '4',
+    'خمسة': '5', 'خمس': '5',
+    'ستة': '6', 'ست': '6',
+    'سبعة': '7', 'سبع': '7',
+    'ثمانية': '8', 'ثمان': '8',
+    'تسعة': '9', 'تسع': '9',
+    'عشرة': '10', 'عشر': '10',
+}
 _ARABIC_MONTHS = {
     'يناير': 1, 'فبراير': 2, 'مارس': 3, 'أبريل': 4, 'ابريل': 4,
     'مايو': 5, 'يونيو': 6, 'يوليو': 7, 'أغسطس': 8, 'اغسطس': 8,
@@ -423,6 +433,15 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             if norm_key in norm_query:
                 return PESTICIDE_AR_TO_EN_NORM[norm_key]
 
+        # 1c. Fuzzy phonetic fallback — catches ASR letter insertions/drops
+        # that exact and space-insensitive matching above miss (see
+        # fuzzy_match_pesticide_ar's docstring for why this is necessary
+        # rather than another dictionary entry).
+        from modules.mappings import fuzzy_match_pesticide_ar
+        _nospace_for_fuzzy = norm_query.replace(" ", "")
+        fuzzy_result = fuzzy_match_pesticide_ar(_nospace_for_fuzzy)
+        if fuzzy_result:
+            return fuzzy_result
         # 1b. Arabic — space-insensitive fallback for compound transliterated
         # names (e.g. "الأزوكسي ستروبين" vs dict's "الازوكسيستروبين").
         # Scoped to pesticide names only — see mappings.py for rationale.
@@ -461,7 +480,12 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         """
         if not query:
             return None
-
+        # Convert spelled-out Arabic numbers ("ثلاثة أشهر") to digits ("3 أشهر")
+        # BEFORE the digit regex runs below — otherwise "آخر ثلاثة أشهر" never
+        # matches because \d+ only sees literal digits, not number words, and
+        # falls through silently to "no date filter" (i.e. the ENTIRE dataset).
+        for word, digit in _ARABIC_NUMBER_WORDS.items():
+            query = re.sub(rf'\b{word}\b', digit, query)
         q = query.translate(_ARABIC_DIGITS)
         q_lower = q.lower()
 
@@ -893,7 +917,8 @@ class CoreQueryEngine(AdvancedHandlersMixin):
                         date_filter=date_filter
                     )
                 return self._handle_find_pesticide_in_sample(entities.pesticide, entities.samples, date_filter=date_filter)
-            
+            if intent == Intent.FIND_PESTICIDE_IN_CATEGORY and entities.pesticide and entities.category:
+                return self._handle_pesticide_in_category(entities.pesticide, entities.category, date_filter=date_filter)
             if intent == Intent.FIND_PESTICIDE_ALL and entities.pesticide:
                 return self._handle_find_pesticide_all(entities.pesticide, date_filter=date_filter)
             
@@ -944,6 +969,49 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         con = self._get_connection()
         text, df, meta = handle_poisoning(con, intent, entities)
         return text, df, None
+
+    def _handle_pesticide_in_category(self, pesticide: str, category_keyword: str,
+                                   date_filter: Optional[str] = None) -> Tuple[str, pd.DataFrame]:
+        """Pesticide detections within a food category — uses IntentRouter's
+        CATEGORY_MAP directly via get_category_sql(), avoiding the English/Arabic
+        key mismatch that broke _handle_category_pesticide()'s CATEGORY_AR lookup."""
+        con = self._get_connection()
+        cat_name, cat_sql = IntentRouter.get_category_sql(category_keyword) if HAS_INTENT_ROUTER else ("العينات", "")
+        cat_filter = f"AND {cat_sql}" if cat_sql else ""
+        date_clause = date_filter or ""
+
+        sql = f"""
+        SELECT
+            "كود العينة"  AS sample_code,
+            "اسم العينة" AS sample_name,
+            pesticide_name AS pesticide,
+            concentration  AS concentration,
+            limit_value    AS mrl,
+            ROUND(exceedance_ratio, 2) AS ratio,
+            sample_result  AS status
+        FROM chemistry_tidy
+        WHERE is_detected = 1
+        AND ({get_pesticide_sql_filter(pesticide)})
+        {cat_filter}
+        {date_clause}
+        ORDER BY "كود العينة" DESC
+        LIMIT 100
+        """
+        df = con.execute(sql).df()
+        con.close()
+
+        if not df.empty:
+            unique_samples = df['sample_code'].nunique()
+            compliant     = len(df[df['status'] == 'Compliant'])
+            non_compliant = len(df[df['status'] == 'Non-Compliant'])
+            response = f"🔍 **{pesticide} في {cat_name}:**\n\n"
+            response += f"✅ عثرنا على **{unique_samples}** عينة فريدة | **{len(df)}** سجل اكتشاف\n"
+            response += f"📊 {compliant} مطابقة | {non_compliant} غير مطابقة\n\n"
+            response += df.to_markdown(index=False)
+        else:
+            response = f"⚠️ لم يتم رصد **{pesticide}** في **{cat_name}**"
+
+        return response, df
 
     def _handle_inspection_priority(self, intent, query, entities=None):
         from modules.inspection_priority import (
