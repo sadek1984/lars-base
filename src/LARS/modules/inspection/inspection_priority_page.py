@@ -30,7 +30,7 @@ from modules.inspection.inspection_priority import (
 from modules.inspection.inspection_map import show_priority_map
 
 if TYPE_CHECKING:
-    from modules.api_service import APIClient
+    from modules.ai.api_service import APIClient
 
 
 def _get_connection():

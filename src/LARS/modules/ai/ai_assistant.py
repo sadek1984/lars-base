@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Dict, Any, Optional
 import random
 from modules.query.mappings import PESTICIDE_AR_TO_EN, translate_pesticide
-from modules.translation_utils import get_language_system_prompt
+from modules.ai.translation_utils import get_language_system_prompt
 from modules.utils.prompt_loader import load_prompt
 import logging
 from modules.query.core_query_engine import get_trust_badge
@@ -280,7 +280,7 @@ def _render_sql_query_result(
 ) -> None:
     """Render a CoreQueryEngine result with Streamlit UI components."""
     import numpy as np
-    from modules.translation_utils import translate_dataframe
+    from modules.ai.translation_utils import translate_dataframe
 
     is_unknown = (
         "Sorry, I couldn't fully understand" in response_text

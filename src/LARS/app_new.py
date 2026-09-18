@@ -25,7 +25,7 @@ import streamlit as st
 import logging
 
 # ── Internal modules ────────────────────────────────────────────
-from modules.api_service import API_BASE_URL, get_api_client, initialize_session_state
+from modules.ai.api_service import API_BASE_URL, get_api_client, initialize_session_state
 from modules.reporting.dashboard import show_dashboard_overview
 from modules.data.env_loader import load_env
 from modules.reporting.predictions import show_predictions_page
@@ -34,7 +34,7 @@ from modules.reporting.statistical_insights import show_statistical_insights_pag
 from modules.reporting.trend_analysis import show_trend_analysis_page
 
 if TYPE_CHECKING:
-    from modules.api_service import APIClient
+    from modules.ai.api_service import APIClient
 
 # ── Environment & Page Config ──────────────────────────────────
 load_env()
@@ -51,7 +51,7 @@ st.set_page_config(
 # openai, duckdb, etc.).
 PAGES: dict[str, str] = {
     "🏠 Dashboard Overview": "modules.reporting.dashboard:show_dashboard_overview",
-    "🤖 AI Assistant": "modules.ai_assistant:show_chat_page",
+    "🤖 AI Assistant": "modules.ai.ai_assistant:show_chat_page",
     "📊 Risk Analysis": "modules.risk.risk_analysis:show_risk_analysis_page",
     "📈 Trend Analysis": "modules.reporting.trend_analysis:show_trend_analysis_page",
     "📋 Statistical Insights": "modules.reporting.statistical_insights:show_statistical_insights_page",
