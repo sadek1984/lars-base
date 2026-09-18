@@ -38,7 +38,7 @@ def show_eu_mrl_lookup_section(df: pd.DataFrame):
     st.subheader("🌐 EU MRL Lookup Tool / أداة البحث عن الحدود الأوروبية")
     
     # Check if database exists
-    db_path = Path(__file__).parent.parent / "scripts" / "eu_mrl_data" / "eu_mrl.db"
+    db_path = Path(__file__).parent.parent.parent / "scripts" / "eu_mrl_data" / "eu_mrl.db"
     
     if not db_path.exists():
         st.warning("⚠️ EU MRL database not found. Run `scripts/download_eu_mrl.py` to download the data.")

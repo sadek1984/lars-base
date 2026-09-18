@@ -828,8 +828,8 @@ def show_chat_page(api_client):
         st.markdown("### 🗄️ Query Engine")
         
         # Check if DuckDB database exists
-        # Note: ai_assistant.py is in modules/, database is in ../data/
-        db_path = Path(__file__).parent.parent / 'data' / 'lars_data_demo.duckdb'
+        # Note: ai_assistant.py is in modules/ai/, database is in ../../data/
+        db_path = Path(__file__).parent.parent.parent / 'data' / 'lars_data_demo.duckdb'
         db_exists = db_path.exists()
 
         
@@ -1363,7 +1363,7 @@ def load_chemical_groups_to_duckdb(con):
     """
     try:
         # File is in src/LARS/scripts/chemical_classification.json
-        config_path = Path(__file__).parent.parent / 'scripts' / 'chemical_classification.json'
+        config_path = Path(__file__).parent.parent.parent / 'scripts' / 'chemical_classification.json'
         if not config_path.exists():
             return
             
