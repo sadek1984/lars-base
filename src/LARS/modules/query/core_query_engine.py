@@ -1014,7 +1014,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         return response, df
 
     def _handle_inspection_priority(self, intent, query, entities=None):
-        from modules.inspection_priority import (
+        from modules.inspection.inspection_priority import (
             is_available, get_top, search_entity,
             to_text, to_voice_summary, component_breakdown,
             extract_priority_params,
@@ -1031,7 +1031,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
 
         # ── ليه المنشأة X أولوية؟ ──
         if intent.name == "INSPECTION_PRIORITY_REASON":
-            from modules.inspection_priority import extract_entity_name_for_reason
+            from modules.inspection.inspection_priority import extract_entity_name_for_reason
             name = extract_entity_name_for_reason(query)
             match = search_entity(name, level="establishment", con=con)
             if match.empty:
@@ -1044,7 +1044,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
             return text, component_breakdown(row), None
 
         if intent.name == "INSPECTION_PRIORITY_ROUTE":
-            from modules.inspection_priority import (
+            from modules.inspection.inspection_priority import (
                 get_recommended_route, to_route_text, to_route_voice,
             )
             route = get_recommended_route(min_confidence="medium", con=con)

@@ -26,7 +26,7 @@ import streamlit as st
 import plotly.graph_objects as go
 from scipy.spatial import Voronoi
 
-from modules.buraydah_coords import BURAYDAH_NEIGHBORHOODS_COORDS, BURAYDAH_CENTER
+from modules.inspection.buraydah_coords import BURAYDAH_NEIGHBORHOODS_COORDS, BURAYDAH_CENTER
 
 # توافق نُسخ Plotly: 6+ غيّر أسماء الأنواع من "Mapbox" لـ "Map" (بيستخدم
 # MapLibre بدل Mapbox، مبقاش محتاج token) — بنكتشف الموجود فعليًا بدل ما

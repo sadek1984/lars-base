@@ -3,7 +3,7 @@
 inspection_priority_page.py — صفحة Streamlit لأولوية التفتيش
 ================================================================
 جدول Top N + تفكيك المكونات الأربعة عند اختيار صف.
-يقرأ فقط من modules.inspection_priority (طبقة القراءة المشتركة) —
+يقرأ فقط من modules.inspection.inspection_priority (طبقة القراءة المشتركة) —
 مفيش SQL هنا، عشان يفضل نفس المصدر بالظبط زي core_query_engine والصوت.
 """
 
@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 import streamlit as st
 
-from modules.inspection_priority import (
+from modules.inspection.inspection_priority import (
     LEVEL_AR_PLURAL,
     component_breakdown,
     freshness_badge,
@@ -27,7 +27,7 @@ from modules.inspection_priority import (
     municipality_trend,
     _muni_label,
 )
-from modules.inspection_map import show_priority_map
+from modules.inspection.inspection_map import show_priority_map
 
 if TYPE_CHECKING:
     from modules.api_service import APIClient

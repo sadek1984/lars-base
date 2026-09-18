@@ -362,7 +362,7 @@ class IntentRouter:
         if psn:
             return Intent[INTENT_ENUM_NAME[psn]]
 
-        from modules.inspection_priority import classify_inspection_priority, PRIORITY_INTENT_ENUM_NAME
+        from modules.inspection.inspection_priority import classify_inspection_priority, PRIORITY_INTENT_ENUM_NAME
         pri = classify_inspection_priority(query)
         if pri:
             return Intent[PRIORITY_INTENT_ENUM_NAME[pri]]

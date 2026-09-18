@@ -122,8 +122,8 @@ uvicorn lars_service:app --host 0.0.0.0 --port 8090
 
 # to run questions_bank with LARS API
 
-python3 -m py_compile /Users/a12/lars-base/src/LARS/modules/advanced_handlers.py
-python3 -m py_compile /Users/a12/lars-base/src/LARS/modules/core_query_engine.py
+python3 -m py_compile /Users/a12/lars-base/src/LARS/modules/query/advanced_handlers.py
+python3 -m py_compile /Users/a12/lars-base/src/LARS/modules/query/core_query_engine.py
 python run_question_bank.py questions_bank.csv baseline.csv
 python check_progress.py baseline.csv
 
@@ -246,7 +246,7 @@ reading from the shared `chemistry_tidy` / `risk_scores` DuckDB tables.
 
 | Page | Registry key | Entry point |
 |---|---|---|
-| 🎯 أولوية التفتيش | `"🎯 أولوية التفتيش"` | `modules.inspection_priority_page:show_inspection_priority_page` |
+| 🎯 أولوية التفتيش | `"🎯 أولوية التفتيش"` | `modules.inspection.inspection_priority_page:show_inspection_priority_page` |
 | 📑 التقارير المتقدمة | `"📑 التقارير المتقدمة"` | `modules.advanced_reports:show_advanced_reports_page` |
 
 ---
@@ -363,7 +363,7 @@ risk, coverage gap, and trend — surfaced as a hierarchical
 municipality → neighborhood → establishment recommendation.
 
 Scores live in `risk_scores`, built by `scripts/build_risk_scores.py`.
-`modules/inspection_priority.py` is a **read layer only** — it computes
+`modules/inspection/inspection_priority.py` is a **read layer only** — it computes
 nothing, so the text engine, voice pipeline, and Streamlit UI all share
 one source of truth.
 
@@ -412,7 +412,7 @@ reasoning behind computing `c_trend` at municipality level.
 
 ### The map
 
-`modules/inspection_map.py` renders Buraydah neighborhoods with **colour
+`modules/inspection/inspection_map.py` renders Buraydah neighborhoods with **colour
 intensity by risk score**, plus numbered markers tracing the visit route in
 nearest-neighbour order (adequate for 3–5 stops; no TSP solver needed).
 
@@ -430,7 +430,7 @@ Instead: colour intensity for priority, a **single 0.6s pulse** (not
 `infinite`) on "🆕 محدّث" badges for neighborhoods newly entering the top
 10 since the page was last opened.
 
-Coordinates live in `modules/buraydah_coords.py`
+Coordinates live in `modules/inspection/buraydah_coords.py`
 (`BURAYDAH_NEIGHBORHOODS_COORDS`, ~34 neighborhoods). Neighborhoods absent
 from that dict are silently skipped — extend the dict to add coverage.
 

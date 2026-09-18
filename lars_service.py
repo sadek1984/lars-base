@@ -40,7 +40,7 @@ async def query_lars(request: QueryRequest):
         # ── فحص مبكر: أسئلة أولوية التفتيش تاخد ملخص صوتي مختصر ──
         # (مش الجدول الكامل — نفس مبدأ عدم قراءة جداول طويلة بالصوت)
         try:
-            from modules.inspection_priority import (
+            from modules.inspection.inspection_priority import (
                 classify_inspection_priority, extract_priority_params,
                 get_top, to_voice_summary,
             )
