@@ -10,7 +10,7 @@ Why this module exists:
     module enforces one canonical path resolution strategy.
 
 Usage:
-    from modules.data_access import load_dataframe, get_duckdb_read, get_duckdb_write
+    from modules.data.data_access import load_dataframe, get_duckdb_read, get_duckdb_write
 """
 
 from __future__ import annotations
@@ -30,8 +30,8 @@ logger = logging.getLogger(__name__)
 # All paths are resolved relative to the LARS package root:
 #   src/LARS/  (parent of the 'modules' directory)
 
-_MODULE_DIR = Path(__file__).resolve().parent          # src/LARS/modules/
-_LARS_ROOT = _MODULE_DIR.parent                        # src/LARS/
+_MODULE_DIR = Path(__file__).resolve().parent          # src/LARS/modules/data/
+_LARS_ROOT = _MODULE_DIR.parent.parent                 # src/LARS/
 _DATA_DIR = _LARS_ROOT / "data"
 _DUCKDB_PATH = _DATA_DIR / "lars_data_demo.duckdb"
 _EXCEL_PATH = _DATA_DIR / "6_months.xlsx"

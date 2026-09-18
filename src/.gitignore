@@ -173,3 +173,6 @@ cython_debug/
 # PyPI configuration file
 .pypirc.DS_Store
 data/
+# The modules/data/ Python package is source code, not a data directory —
+# un-ignore it (file-type rules like *.duckdb still apply inside it).
+!LARS/modules/data/

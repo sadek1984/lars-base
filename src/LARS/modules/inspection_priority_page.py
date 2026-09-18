@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 
 def _get_connection():
     """نفس نمط get_duckdb_connection() في ai_assistant.py — اتصال read-only مشترك."""
-    from modules.data_access import get_duckdb_read, _DUCKDB_PATH
+    from modules.data.data_access import get_duckdb_read, _DUCKDB_PATH
     if not _DUCKDB_PATH.exists():
         return None
     return get_duckdb_read()

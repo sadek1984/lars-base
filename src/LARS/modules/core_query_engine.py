@@ -53,7 +53,7 @@ except ImportError:
     QueryEntities = None
 
 # Database path — delegate to data_access so all modules use the same resolution
-from modules.data_access import _DUCKDB_PATH as DB_PATH
+from modules.data.data_access import _DUCKDB_PATH as DB_PATH
 from modules.prompt_loader import load_prompt
 
 # LLM Configuration

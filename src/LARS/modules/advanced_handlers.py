@@ -46,7 +46,7 @@ class AdvancedHandlersMixin:
         HRI > 1 → potential health risk
         """
         try:
-            from modules.pesticide_groups import get_adi, get_consumption, BODY_WEIGHT_KG
+            from modules.data.pesticide_groups import get_adi, get_consumption, BODY_WEIGHT_KG
         except ImportError:
             from pesticide_groups import get_adi, get_consumption, BODY_WEIGHT_KG
 
@@ -211,7 +211,7 @@ class AdvancedHandlersMixin:
         Optionally filter to samples that contain >= min_pesticides.
         """
         try:
-            from modules.pesticide_groups import classify_pesticide
+            from modules.data.pesticide_groups import classify_pesticide
         except ImportError:
             from pesticide_groups import classify_pesticide
 
@@ -889,7 +889,7 @@ class AdvancedHandlersMixin:
         return response, df
     def _handle_hri_top_consumed(self, n: int = 3) -> Tuple[str, pd.DataFrame]:
         try:
-            from modules.pesticide_groups import get_consumption
+            from modules.data.pesticide_groups import get_consumption
         except ImportError:
             from pesticide_groups import get_consumption
 
@@ -904,7 +904,7 @@ class AdvancedHandlersMixin:
     
     def _handle_avg_pesticides_high_risk_samples(self, threshold: float = 1.0) -> Tuple[str, pd.DataFrame]:
         try:
-            from modules.pesticide_groups import get_adi, get_consumption, BODY_WEIGHT_KG
+            from modules.data.pesticide_groups import get_adi, get_consumption, BODY_WEIGHT_KG
         except ImportError:
             from pesticide_groups import get_adi, get_consumption, BODY_WEIGHT_KG
 
@@ -1036,7 +1036,7 @@ class AdvancedHandlersMixin:
         """
         from modules.mappings import CHEMICAL_GROUP_AR_TO_EN
         try:
-            from modules.pesticide_groups import classify_pesticide
+            from modules.data.pesticide_groups import classify_pesticide
         except ImportError:
             from pesticide_groups import classify_pesticide
 
@@ -1081,7 +1081,7 @@ class AdvancedHandlersMixin:
     def _handle_multi_group_samples(self, min_groups: int = 2) -> Tuple[str, pd.DataFrame]:
         """Samples containing pesticides from MORE THAN ONE chemical group. C027."""
         try:
-            from modules.pesticide_groups import classify_pesticide
+            from modules.data.pesticide_groups import classify_pesticide
         except ImportError:
             from pesticide_groups import classify_pesticide
 
@@ -1149,7 +1149,7 @@ class AdvancedHandlersMixin:
     def _handle_group_by_neighborhood(self) -> Tuple[str, pd.DataFrame]:
         """Chemical group distribution across neighborhoods (cross-tab). C030."""
         try:
-            from modules.pesticide_groups import classify_pesticide
+            from modules.data.pesticide_groups import classify_pesticide
         except ImportError:
             from pesticide_groups import classify_pesticide
 
@@ -1295,7 +1295,7 @@ class AdvancedHandlersMixin:
     # ──────────────────────────────────────────────────────────────────────
     def _get_classified_detections(self) -> pd.DataFrame:
         try:
-            from modules.pesticide_groups import classify_pesticide
+            from modules.data.pesticide_groups import classify_pesticide
         except ImportError:
             from pesticide_groups import classify_pesticide
         con = self._get_connection()

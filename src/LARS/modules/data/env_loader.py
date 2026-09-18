@@ -12,7 +12,7 @@ Why:
     all edge cases and logs what it loads (without leaking secrets).
 
 Usage:
-    from modules.env_loader import load_env
+    from modules.data.env_loader import load_env
     load_env()  # Loads .env.app into os.environ
 """
 
@@ -25,8 +25,8 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-_LARS_ROOT = Path(__file__).resolve().parent.parent  # src/LARS/
-_PROJECT_ROOT = _LARS_ROOT.parent.parent             # project root
+_LARS_ROOT = Path(__file__).resolve().parent.parent.parent  # src/LARS/
+_PROJECT_ROOT = _LARS_ROOT.parent.parent                    # project root
 
 
 def _find_env_file() -> Optional[Path]:

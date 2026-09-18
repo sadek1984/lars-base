@@ -4,7 +4,7 @@ import numpy as np
 import os
 import duckdb
 from scipy.stats import f_oneway
-from modules.data_access import (
+from modules.data.data_access import (
     load_dataframe as load_data_from_path,
     get_duckdb_read as get_duckdb_connection,
     get_duckdb_write as get_duckdb_connection_write,

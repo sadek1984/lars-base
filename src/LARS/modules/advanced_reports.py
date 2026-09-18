@@ -41,7 +41,7 @@ import streamlit as st
 # this page only ever reads.
 # ---------------------------------------------------------------------------
 try:
-    from modules.data_access import get_duckdb_write as _get_conn
+    from modules.data.data_access import get_duckdb_write as _get_conn
 except ImportError:
     import os
     import duckdb

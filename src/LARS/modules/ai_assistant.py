@@ -1393,7 +1393,7 @@ def load_chemical_groups_to_duckdb(con):
 
 def get_duckdb_connection():
     """Get DuckDB read-only connection. Delegates path resolution to data_access."""
-    from modules.data_access import get_duckdb_read, _DUCKDB_PATH
+    from modules.data.data_access import get_duckdb_read, _DUCKDB_PATH
     if not _DUCKDB_PATH.exists():
         return None
     con = get_duckdb_read()
@@ -1402,7 +1402,7 @@ def get_duckdb_connection():
 
 def get_duckdb_connection_write():
     """Get DuckDB write connection. Delegates path resolution to data_access."""
-    from modules.data_access import get_duckdb_write, _DUCKDB_PATH
+    from modules.data.data_access import get_duckdb_write, _DUCKDB_PATH
     if not _DUCKDB_PATH.exists():
         return None
     con = get_duckdb_write()

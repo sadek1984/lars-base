@@ -638,7 +638,7 @@ def log_inspection(entity_name: str, level: str = "establishment",
     break every other page's DB access for the rest of the session."""
     c = con
     if c is None:
-        from modules.data_access import get_duckdb_write
+        from modules.data.data_access import get_duckdb_write
         c = get_duckdb_write()
     c.execute(f"""
         CREATE TABLE IF NOT EXISTS {INSPECTIONS_TABLE} (
@@ -671,7 +671,7 @@ def undo_inspection(inspection_id: int, con=None) -> None:
     permanent test data in inspections_log."""
     c = con
     if c is None:
-        from modules.data_access import get_duckdb_write
+        from modules.data.data_access import get_duckdb_write
         c = get_duckdb_write()
     c.execute(f"DELETE FROM {INSPECTIONS_TABLE} WHERE id = ?", [inspection_id])
 
