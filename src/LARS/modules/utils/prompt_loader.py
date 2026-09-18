@@ -8,7 +8,7 @@ Curly braces { } in code examples are always treated as literals.
 from pathlib import Path
 from string import Template
 
-_PROMPTS_DIR = Path(__file__).parent / "prompts"
+_PROMPTS_DIR = Path(__file__).parent.parent / "prompts"  # modules/prompts/
 
 
 def load_prompt(name: str, **kwargs) -> str:

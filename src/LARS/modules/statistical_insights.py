@@ -4,7 +4,7 @@ import os
 from scipy.stats import f_oneway
 
 
-from modules.utils import map_season_names, calculate_violations, load_data_from_path, perform_anova_analysis
+from modules.utils.utils import map_season_names, calculate_violations, load_data_from_path, perform_anova_analysis
 
 def show_statistical_insights_page(api_client):
     """Statistical Insights page with chemist-friendly improvements"""

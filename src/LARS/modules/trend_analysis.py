@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 import os
 
 
-from modules.utils import map_season_names, calculate_violations, load_data_from_path
+from modules.utils.utils import map_season_names, calculate_violations, load_data_from_path
 
 def show_trend_analysis_page(api_client):
     # ============================================================================

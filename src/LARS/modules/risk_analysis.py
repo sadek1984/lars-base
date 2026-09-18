@@ -4,7 +4,7 @@ import numpy as np
 import os
 import plotly.express as px
 import plotly.graph_objects as go
-from modules.utils import map_season_names, calculate_violations, load_data_from_path
+from modules.utils.utils import map_season_names, calculate_violations, load_data_from_path
 
 # Import risk assessment service
 try:

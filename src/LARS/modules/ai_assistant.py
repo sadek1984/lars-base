@@ -13,7 +13,7 @@ from typing import Dict, Any, Optional
 import random
 from modules.mappings import PESTICIDE_AR_TO_EN, translate_pesticide
 from modules.translation_utils import get_language_system_prompt
-from modules.prompt_loader import load_prompt
+from modules.utils.prompt_loader import load_prompt
 import logging
 from modules.core_query_engine import get_trust_badge
 # Import risk window components

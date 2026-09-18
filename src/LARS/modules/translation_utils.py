@@ -14,7 +14,7 @@ Handles Arabic ↔ English translation for:
 """
 
 import pandas as pd
-from modules.prompt_loader import load_prompt
+from modules.utils.prompt_loader import load_prompt
 
 
 # ============================================================

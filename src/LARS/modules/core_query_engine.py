@@ -54,7 +54,7 @@ except ImportError:
 
 # Database path — delegate to data_access so all modules use the same resolution
 from modules.data.data_access import _DUCKDB_PATH as DB_PATH
-from modules.prompt_loader import load_prompt
+from modules.utils.prompt_loader import load_prompt
 
 # LLM Configuration
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
