@@ -247,7 +247,7 @@ reading from the shared `chemistry_tidy` / `risk_scores` DuckDB tables.
 | Page | Registry key | Entry point |
 |---|---|---|
 | 🎯 أولوية التفتيش | `"🎯 أولوية التفتيش"` | `modules.inspection.inspection_priority_page:show_inspection_priority_page` |
-| 📑 التقارير المتقدمة | `"📑 التقارير المتقدمة"` | `modules.advanced_reports:show_advanced_reports_page` |
+| 📑 التقارير المتقدمة | `"📑 التقارير المتقدمة"` | `modules.reporting.advanced_reports:show_advanced_reports_page` |
 
 ---
 

@@ -6,7 +6,7 @@ Generalized seasonal compliance report engine, driven by the live
 `chemistry_tidy` table for ANY commodity (اسم العينة), not a single
 uploaded file. Add one line to app_new.py's PAGES dict:
 
-    "📑 التقارير المتقدمة": "modules.advanced_reports:show_advanced_reports_page",
+    "📑 التقارير المتقدمة": "modules.reporting.advanced_reports:show_advanced_reports_page",
 
 WHY THIS IS SIMPLER THAN THE ORIGINAL PROTOTYPE
 --------------------------------------------------

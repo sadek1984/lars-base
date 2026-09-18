@@ -26,12 +26,12 @@ import logging
 
 # ── Internal modules ────────────────────────────────────────────
 from modules.api_service import API_BASE_URL, get_api_client, initialize_session_state
-from modules.dashboard import show_dashboard_overview
+from modules.reporting.dashboard import show_dashboard_overview
 from modules.data.env_loader import load_env
-from modules.predictions import show_predictions_page
+from modules.reporting.predictions import show_predictions_page
 from modules.risk.risk_analysis import show_risk_analysis_page
-from modules.statistical_insights import show_statistical_insights_page
-from modules.trend_analysis import show_trend_analysis_page
+from modules.reporting.statistical_insights import show_statistical_insights_page
+from modules.reporting.trend_analysis import show_trend_analysis_page
 
 if TYPE_CHECKING:
     from modules.api_service import APIClient
@@ -50,14 +50,14 @@ st.set_page_config(
 # Lazy import for ai_assistant to keep startup fast (it pulls in
 # openai, duckdb, etc.).
 PAGES: dict[str, str] = {
-    "🏠 Dashboard Overview": "modules.dashboard:show_dashboard_overview",
+    "🏠 Dashboard Overview": "modules.reporting.dashboard:show_dashboard_overview",
     "🤖 AI Assistant": "modules.ai_assistant:show_chat_page",
     "📊 Risk Analysis": "modules.risk.risk_analysis:show_risk_analysis_page",
-    "📈 Trend Analysis": "modules.trend_analysis:show_trend_analysis_page",
-    "📋 Statistical Insights": "modules.statistical_insights:show_statistical_insights_page",
-    "🔮 Predictions": "modules.predictions:show_predictions_page",
+    "📈 Trend Analysis": "modules.reporting.trend_analysis:show_trend_analysis_page",
+    "📋 Statistical Insights": "modules.reporting.statistical_insights:show_statistical_insights_page",
+    "🔮 Predictions": "modules.reporting.predictions:show_predictions_page",
     "🎯 أولوية التفتيش": "modules.inspection.inspection_priority_page:show_inspection_priority_page",
-    "📑 التقارير المتقدمة": "modules.advanced_reports:show_advanced_reports_page",
+    "📑 التقارير المتقدمة": "modules.reporting.advanced_reports:show_advanced_reports_page",
 }
 
 
