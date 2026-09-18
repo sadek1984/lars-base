@@ -22,7 +22,7 @@ import os
 import logging
 
 # ── Centralized mappings (replaces local dictionaries) ──
-from modules.mappings import (
+from modules.query.mappings import (
     SAMPLE_CORRECTIONS,
     SAMPLE_EN_TO_AR,
     NEIGHBORHOOD_CORRECTIONS,
@@ -44,7 +44,7 @@ except ImportError:
 
 # Intent-based query router (optional - graceful fallback if not available)
 try:
-    from modules.intent_router import IntentRouter, Intent, QueryEntities
+    from modules.query.intent_router import IntentRouter, Intent, QueryEntities
     HAS_INTENT_ROUTER = True
 except ImportError:
     HAS_INTENT_ROUTER = False
@@ -97,7 +97,7 @@ _DUAL_FORMS = {
     'عامين': ('year', 2),
 }
 
-from modules.advanced_handlers import AdvancedHandlersMixin
+from modules.query.advanced_handlers import AdvancedHandlersMixin
 
 class CoreQueryEngine(AdvancedHandlersMixin):
     """
@@ -193,7 +193,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         Dialect synonyms and action/limit keywords are defined here
         because they are specific to the query engine. All entity
         dictionaries (samples, pesticides, neighborhoods) come from
-        the centralized ``modules.mappings`` module.
+        the centralized ``modules.query.mappings`` module.
         """
         # Dialect Synonyms (KEEP — engine-specific)
         self.dialect_synonyms = {
@@ -294,7 +294,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
 
         # Build reverse map: English canonical → list of Arabic query keys
         # e.g. 'Tomato' → ['طماطم', 'طماطم شيري']  (only the base match matters)
-        from modules.mappings import SAMPLE_CORRECTIONS
+        from modules.query.mappings import SAMPLE_CORRECTIONS
 
         en_to_ar: dict = {}
         for ar_key, en_val in SAMPLE_CORRECTIONS.items():
@@ -336,7 +336,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         query_lower = query.lower()
         remaining_lower = query_lower  # track consumed text to avoid sub-matches
 
-        from modules.mappings import SAMPLE_CORRECTIONS_NORM, normalize_arabic_text
+        from modules.query.mappings import SAMPLE_CORRECTIONS_NORM, normalize_arabic_text
         norm_query = normalize_arabic_text(query)
         remaining_norm = norm_query
         remaining_lower_en = query.lower()  # kept for English keys only
@@ -358,7 +358,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
                     remaining_lower_en = remaining_lower_en.replace(key, " " * len(key), 1)
 
         # Category expansion — uses English "نوع العينة" values from DB
-        # CATEGORY_EN imported from modules.mappings — single source of truth
+        # CATEGORY_EN imported from modules.query.mappings — single source of truth
         if not detected:
             matched_cat = None
             for kw, cat in CATEGORY_EN.items():
@@ -423,7 +423,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         # spelling variants). Longest keys first to avoid short-prefix
         # shadowing, e.g. matching "بابروفيزن" before a shorter substring
         # of a different pesticide name.
-        from modules.mappings import (
+        from modules.query.mappings import (
             PESTICIDE_AR_TO_EN_NORM,
             PESTICIDE_AR_TO_EN_NORM_NOSPACE,
             normalize_arabic_text,
@@ -437,7 +437,7 @@ class CoreQueryEngine(AdvancedHandlersMixin):
         # that exact and space-insensitive matching above miss (see
         # fuzzy_match_pesticide_ar's docstring for why this is necessary
         # rather than another dictionary entry).
-        from modules.mappings import fuzzy_match_pesticide_ar
+        from modules.query.mappings import fuzzy_match_pesticide_ar
         _nospace_for_fuzzy = norm_query.replace(" ", "")
         fuzzy_result = fuzzy_match_pesticide_ar(_nospace_for_fuzzy)
         if fuzzy_result:

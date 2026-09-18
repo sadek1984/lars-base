@@ -17,7 +17,7 @@ Architecture:
        (shows what it can, doesn't fail if optional info is missing)
 
 Usage:
-    from modules.intent_router import IntentRouter
+    from modules.query.intent_router import IntentRouter
 
     router = IntentRouter()
     intent, entities = router.analyze("انواع التوابل في حي الاسكان")
@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, Dict, List, Optional, Tuple
 
-from modules.mappings import (
+from modules.query.mappings import (
     PESTICIDE_AR_TO_EN,
     PESTICIDE_AR_TO_EN_NORM,
     SAMPLE_CORRECTIONS,

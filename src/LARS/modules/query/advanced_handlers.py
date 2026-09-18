@@ -19,7 +19,7 @@ import logging
 from typing import List, Optional, Tuple
 import pandas as pd
 
-from modules.mappings import CATEGORY_AR
+from modules.query.mappings import CATEGORY_AR
 
 
 class AdvancedHandlersMixin:
@@ -316,14 +316,14 @@ class AdvancedHandlersMixin:
         Find all sample types in a category that contain a specific pesticide.
         """
         try:
-            from modules.mappings import get_pesticide_variants
+            from modules.query.mappings import get_pesticide_variants
         except ImportError:
             get_pesticide_variants = lambda p: [p]
 
         con = self._get_connection()
 
         # Build sample filter from category or explicit samples
-        # CATEGORY_AR imported from modules.mappings — single source of truth
+        # CATEGORY_AR imported from modules.query.mappings — single source of truth
 
         if samples:
             conditions = [f"\"اسم العينة\" LIKE '%{s}%'" for s in samples]
@@ -475,7 +475,7 @@ class AdvancedHandlersMixin:
         category_key: Optional[str] = None,
     ) -> Tuple[str, pd.DataFrame]:
         """Samples where concentration exceeded `multiplier`x the MRL. B018, B019."""
-        from modules.mappings import CATEGORY_AR
+        from modules.query.mappings import CATEGORY_AR
         if samples:
             conditions = [f"\"اسم العينة\" LIKE '%{s}%'" for s in samples]
         elif category_key and category_key in CATEGORY_AR:
@@ -610,7 +610,7 @@ class AdvancedHandlersMixin:
         or 'avg_pesticides' (avg pesticide count per sample).
         Covers A045, B023, C014.
         """
-        from modules.mappings import CATEGORY_AR
+        from modules.query.mappings import CATEGORY_AR
         cats = {"a": cat_a, "b": cat_b}
         rows = []
         con = self._get_connection()
@@ -1034,7 +1034,7 @@ class AdvancedHandlersMixin:
         recognized at all (vs. an empty list, which means recognized but
         zero matching pesticides currently in the data).
         """
-        from modules.mappings import CHEMICAL_GROUP_AR_TO_EN
+        from modules.query.mappings import CHEMICAL_GROUP_AR_TO_EN
         try:
             from modules.data.pesticide_groups import classify_pesticide
         except ImportError:
@@ -1421,7 +1421,7 @@ class AdvancedHandlersMixin:
     ) -> Tuple[str, pd.DataFrame]:
         """Average concentration of pesticide in samples that are above/below limit."""
         try:
-            from modules.mappings import get_pesticide_variants
+            from modules.query.mappings import get_pesticide_variants
         except ImportError:
             get_pesticide_variants = lambda p: [p]
 
@@ -1539,7 +1539,7 @@ class AdvancedHandlersMixin:
         "Frequency of imidacloprid in tomatoes"
         """
         try:
-            from modules.mappings import get_pesticide_variants
+            from modules.query.mappings import get_pesticide_variants
         except ImportError:
             get_pesticide_variants = lambda p: [p]
 
@@ -1598,7 +1598,7 @@ class AdvancedHandlersMixin:
         """
         con = self._get_connection()
 
-        # CATEGORY_AR imported from modules.mappings — single source of truth
+        # CATEGORY_AR imported from modules.query.mappings — single source of truth
 
         if samples:
             conditions = [f"\"اسم العينة\" LIKE '%{s}%'" for s in samples]

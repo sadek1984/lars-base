@@ -13,7 +13,7 @@ LARS_SRC = os.environ.get(
 if LARS_SRC not in sys.path:
     sys.path.insert(0, LARS_SRC)
 try:
-    from modules.core_query_engine import CoreQueryEngine
+    from modules.query.core_query_engine import CoreQueryEngine
     LARS_AVAILABLE = True
     logger.info("✅ CoreQueryEngine imported successfully")
 except ImportError as e:

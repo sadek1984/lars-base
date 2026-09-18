@@ -11,11 +11,11 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, Optional
 import random
-from modules.mappings import PESTICIDE_AR_TO_EN, translate_pesticide
+from modules.query.mappings import PESTICIDE_AR_TO_EN, translate_pesticide
 from modules.translation_utils import get_language_system_prompt
 from modules.utils.prompt_loader import load_prompt
 import logging
-from modules.core_query_engine import get_trust_badge
+from modules.query.core_query_engine import get_trust_badge
 # Import risk window components
 try:
     from modules.risk_windows import (
@@ -249,7 +249,7 @@ def process_data_query_sql(query: str, model, include_risk: bool = False):
     # PRIORITY 2: CoreQueryEngine (patterns + intent + LLM SQL)
     # ================================================================
     try:
-        from modules.core_query_engine import CoreQueryEngine
+        from modules.query.core_query_engine import CoreQueryEngine
 
         if "core_query_engine" not in st.session_state:
             st.session_state.core_query_engine = CoreQueryEngine(enable_llm_fallback=False)

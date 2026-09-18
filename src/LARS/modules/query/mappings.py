@@ -11,7 +11,7 @@ Why this module exists:
     editing 4-5 files — a major DRY violation and bug magnet.
 
 Usage:
-    from modules.mappings import (
+    from modules.query.mappings import (
         PESTICIDE_AR_TO_EN,
         SAMPLE_CORRECTIONS,
         STT_CORRECTIONS,

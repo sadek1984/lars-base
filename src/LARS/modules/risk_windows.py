@@ -13,7 +13,7 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List, Any, Optional
 import re
-from modules.mappings import COMMODITY_TO_ARABIC
+from modules.query.mappings import COMMODITY_TO_ARABIC
 
 # Import risk assessment functions
 try:

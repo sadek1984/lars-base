@@ -52,7 +52,7 @@ def get_engine():
     Import and construct CoreQueryEngine exactly as your app does.
     Adjust the module/class name and constructor args to match your repo.
     """
-    from modules.core_query_engine import CoreQueryEngine  # matches src/LARS/modules/, mirrors the app's own 'from modules...' internal imports
+    from modules.query.core_query_engine import CoreQueryEngine  # matches src/LARS/modules/, mirrors the app's own 'from modules...' internal imports
     engine = CoreQueryEngine(db_path=DB_PATH)                    # <-- confirm this kwarg name
     return engine
 
