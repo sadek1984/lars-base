@@ -1,3 +1,4 @@
+# 2026-09-18: Moved to deprecated/ during the modules/ refactor — found unused: only referenced via a bare `from semantic_pattern_recognizer import ...` in core_query_engine.py that always fails under the deployed PYTHONPATH, and its deps (sentence_transformers, chromadb) are installed in no deployment image.
 """
 Semantic Pattern Recognizer for LARS
 Uses sentence-transformers for Arabic/multilingual embeddings
