@@ -8,7 +8,7 @@ from modules.utils.utils import map_season_names, calculate_violations, load_dat
 
 # Import risk assessment service
 try:
-    from modules.risk_assessment_service import (
+    from modules.risk.risk_assessment_service import (
         RiskAssessmentService,
         get_population_options,
         get_population_weight,

@@ -29,7 +29,7 @@ from modules.api_service import API_BASE_URL, get_api_client, initialize_session
 from modules.dashboard import show_dashboard_overview
 from modules.data.env_loader import load_env
 from modules.predictions import show_predictions_page
-from modules.risk_analysis import show_risk_analysis_page
+from modules.risk.risk_analysis import show_risk_analysis_page
 from modules.statistical_insights import show_statistical_insights_page
 from modules.trend_analysis import show_trend_analysis_page
 
@@ -52,7 +52,7 @@ st.set_page_config(
 PAGES: dict[str, str] = {
     "🏠 Dashboard Overview": "modules.dashboard:show_dashboard_overview",
     "🤖 AI Assistant": "modules.ai_assistant:show_chat_page",
-    "📊 Risk Analysis": "modules.risk_analysis:show_risk_analysis_page",
+    "📊 Risk Analysis": "modules.risk.risk_analysis:show_risk_analysis_page",
     "📈 Trend Analysis": "modules.trend_analysis:show_trend_analysis_page",
     "📋 Statistical Insights": "modules.statistical_insights:show_statistical_insights_page",
     "🔮 Predictions": "modules.predictions:show_predictions_page",

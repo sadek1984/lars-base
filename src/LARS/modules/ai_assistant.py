@@ -18,12 +18,12 @@ import logging
 from modules.query.core_query_engine import get_trust_badge
 # Import risk window components
 try:
-    from modules.risk_windows import (
+    from modules.risk.risk_windows import (
         show_health_risk_window,
         show_quality_index_window,
         process_triggered_query
     )
-    from modules.risk_assessment_service import detect_query_type
+    from modules.risk.risk_assessment_service import detect_query_type
     RISK_WINDOWS_AVAILABLE = True
 except ImportError:
     RISK_WINDOWS_AVAILABLE = False
@@ -184,7 +184,7 @@ def process_data_query_sql(query: str, model, include_risk: bool = False):
             try:
                 trigger = detect_query_type(query)
                 if trigger:
-                    from modules.risk_windows import detect_sample_type
+                    from modules.risk.risk_windows import detect_sample_type
                     detected_sample = detect_sample_type(query)
                     con = get_duckdb_connection()
                     if con:

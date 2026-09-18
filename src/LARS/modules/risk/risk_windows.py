@@ -17,7 +17,7 @@ from modules.query.mappings import COMMODITY_TO_ARABIC
 
 # Import risk assessment functions
 try:
-    from modules.risk_assessment_service import (
+    from modules.risk.risk_assessment_service import (
         calculate_lars_metrics,
         calculate_commodity_summary_metrics,
         calculate_sample_iqr_summary,
@@ -353,7 +353,7 @@ def show_risk_input_form(
     
     with col3:
         # UPDATED: Get population-specific IR in g/kg bw/day
-        from modules.risk_assessment_service import RiskAssessmentConfig
+        from modules.risk.risk_assessment_service import RiskAssessmentConfig
         
         # Check if detailed rates are available
         has_detailed = RiskAssessmentConfig.has_detailed_rates(selected_commodity)
@@ -709,7 +709,7 @@ def show_quality_index_window(
     
     with col2:
         # UPDATED: Show if population-specific rates are available for this commodity
-        from modules.risk_assessment_service import RiskAssessmentConfig
+        from modules.risk.risk_assessment_service import RiskAssessmentConfig
         
         has_detailed = RiskAssessmentConfig.has_detailed_rates(selected_commodity)
         

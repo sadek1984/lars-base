@@ -23,11 +23,14 @@ from dataclasses import dataclass
 from functools import lru_cache
 import sys
 # Get the directory where this module is located
-MODULE_DIR = Path(__file__).parent
-SCRIPTS_DIR = MODULE_DIR.parent / 'scripts'
+MODULE_DIR = Path(__file__).parent                 # src/LARS/modules/risk/
+_LARS_ROOT = MODULE_DIR.parent.parent              # src/LARS/
+SCRIPTS_DIR = _LARS_ROOT / 'scripts'
 
-# Add project root to sys.path to allow importing from helper
-project_root = str(MODULE_DIR.parent.parent)
+# Add the LARS root to sys.path to allow importing from helper
+# (was MODULE_DIR.parent.parent == src/, which never contained helper/;
+# the import only worked because deployments put src/LARS on PYTHONPATH)
+project_root = str(_LARS_ROOT)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 

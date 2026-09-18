@@ -7,7 +7,7 @@ project_root = str(Path(__file__).parent.parent.parent)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from src.LARS.modules.risk_assessment_service import calculate_commodity_summary_metrics
+from src.LARS.modules.risk.risk_assessment_service import calculate_commodity_summary_metrics
 from src.helper.risk_assessment_config import RiskAssessmentConfig
 
 def test_cypermethrin_calculation():
