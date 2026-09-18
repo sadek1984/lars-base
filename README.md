@@ -112,7 +112,8 @@ docker compose up --build
 streamlit run src/LARS/app_new.py
 
 # local run
-LARS_API_BASE_URL=http://localhost:8090 streamlit run src/LARS/app_new.py
+cd /Users/a12/lars-base/.claude/worktrees/great-carson-32ce1a/src/LARS
+streamlit run app_new.py
 # lars-engine local
 cd /Users/a12/lars-base
 PYTHONPATH=/Users/a12/lars-base/src/LARS:/Users/a12/lars-base/src/LARS/modules \
