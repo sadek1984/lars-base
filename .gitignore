@@ -42,3 +42,11 @@ src/LARS/scripts/eu_mrl_data/
 *.bak_poisoning
 .DS_Store
 .DS_Store
+
+# phase0 regression outputs
+phase0/*.csv
+phase0/*.log
+!phase0/baselines/
+
+# Claude Code worktrees
+.claude/worktrees/
