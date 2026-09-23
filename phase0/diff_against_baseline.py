@@ -42,7 +42,7 @@ def main():
             unchanged += 1
             continue
 
-        broken_statuses = ("exception", "unanswered")
+        broken_statuses = ("exception", "unanswered", "error_text")
         was_broken = old_row["status"] in broken_statuses
         now_broken = new_row["status"] in broken_statuses
 

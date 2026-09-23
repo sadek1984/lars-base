@@ -17,7 +17,10 @@ wants to pick a chart type; ignore it otherwise.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional
+
+from modules.query.messages import POLITE_ERROR_MESSAGE
 
 import pandas as pd
 
@@ -194,8 +197,10 @@ def handle_poisoning(con, intent_or_name: Any, entities: Any = None,
 
     try:
         df = con.execute(sql, params).df() if params else con.execute(sql).df()
-    except Exception as exc:
-        return (f"تعذر تنفيذ الاستعلام: {exc}", None,
+    except Exception:
+        # Never show the raw DB error to the user; keep it in the log.
+        logging.exception("poisoning intent %s failed", intent_id)
+        return (POLITE_ERROR_MESSAGE, None,
                 {"render": "text", "intent": intent_id, "error": True})
 
     if not allow_names:

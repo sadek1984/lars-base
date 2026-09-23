@@ -159,6 +159,7 @@ class KeywordPatternsMixin:
                 return self._handle_count_samples_compliance_table(
                     detected_samples, detected_neighborhoods, True,
                     date_filter=detected_period,
+                    municipalities=resolution.municipalities if resolution is not None else None,
                 )
             return self._handle_kpi_summary(
                 date_filter=detected_period,
@@ -327,7 +328,9 @@ class KeywordPatternsMixin:
         # Pattern MUNICIPALITY: pesticides / breakdown / comparison by بلدية.
         # Municipalities come from the resolver (exact DB values), never from
         # slicing the words after 'بلدية'.
-        if resolution is not None and resolution.mentions_municipality:
+        # Associations stored in the same column ('جمعية البطين الزراعية') resolve
+        # without the word بلدية, so a resolved value alone also triggers this.
+        if resolution is not None and (resolution.mentions_municipality or resolution.municipalities):
             muns = resolution.municipalities
             wants_breakdown = 'أنواع' in query or 'مفصلة' in query or 'حسب نوع' in query
             is_compare = 'قارن' in query or 'مقابل' in query
@@ -335,13 +338,30 @@ class KeywordPatternsMixin:
                 metric = 'pesticides' if 'المبيدات' in query or 'مبيدات' in query else 'violation_rate'
                 return self._handle_municipality_comparison(muns[0], muns[1], metric=metric)
             if muns and not is_compare:
-                if wants_breakdown:
+                asks_pesticides = 'مبيد' in query
+                if wants_breakdown or (not asks_pesticides and not resolution.mentions_municipality):
+                    # "ما هي العينات المأخوذة من جمعية …" → samples by product
                     return self._handle_municipality_breakdown(muns[0])
                 return self._handle_municipality_pesticides(muns[0])
             if resolution.all_municipalities and wants_breakdown:
                 return self._handle_municipality_breakdown(None)
             if not muns and (is_compare or wants_breakdown or 'مبيدات' in query or 'المبيدات' in query):
                 return self._unresolved_municipality_message(), None
+
+        # Pattern HEADLINE_TOTALS: "كم إجمالي العينات" — dataset-wide sample and
+        # record totals, only when the question names no entity or condition.
+        totals_kws = ('إجمالي العينات', 'اجمالي العينات', 'كم إجمالي', 'كم اجمالي',
+                      'كم عدد العينات', 'العدد الكلي للعينات', 'كم عينة فريدة')
+        condition_words = ('مخالف', 'فوق', 'تحت', 'راسب', 'مطابق', 'تجاوز', 'مبيد',
+                           'الحد', 'ليس لها', 'ناقص', 'حي ', 'نوع')
+        has_entity = bool(
+            detected_samples or detected_neighborhoods or detected_pesticide or _detected_category_key
+            or (resolution is not None and (resolution.municipalities or resolution.facilities
+                                            or resolution.categories or resolution.products))
+        )
+        if (any(k in query for k in totals_kws) and not has_entity
+                and not any(w in query for w in condition_words)):
+            return self._handle_headline_totals(date_filter=detected_period)
         # Pattern TIME_SERIES: monthly/weekly/quarterly/half-year breakdown
         if 'شهرياً' in query or 'كل شهر' in query or 'مفحوصة شهرياً' in query:
             return self._handle_time_series_breakdown('month')

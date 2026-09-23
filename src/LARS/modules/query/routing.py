@@ -146,8 +146,10 @@ class RoutingMixin:
                     return self._handle_comprehensive_neighborhood(query, detected_samples, detected_neighborhoods, date_filter=date_filter)
             
             elif pattern_type == 'facility_search':
-                # Extract facility name from query
-                return self._handle_facility_search(query)
+                # Only when the question names a real facility; otherwise fall through.
+                facilities = self._resolved_facilities(query)
+                if facilities:
+                    return self._handle_facility_search(facilities)
             
             # Pattern recognized but couldn't be handled - fall back to keyword matching
             return None
@@ -239,11 +241,14 @@ class RoutingMixin:
             if intent == Intent.COMPREHENSIVE_ANALYSIS and entities.samples:
                 return self._handle_comprehensive_analysis(entities.samples, date_filter=date_filter)
             
-            if intent == Intent.FACILITY_SEARCH:
-                return self._handle_facility_search(query)
-            
-            if intent == Intent.RECIPIENT_SEARCH:
-                return self._handle_facility_search(query)  # Same handler for now
+            if intent in (Intent.FACILITY_SEARCH, Intent.RECIPIENT_SEARCH):
+                # A keyword like 'جمعية' or 'المستلمة' is not a facility. Search
+                # only when the question names a value that exists in the
+                # facility column; otherwise return None so Tier 3 answers it.
+                facilities = self._resolved_facilities(entities.raw_query or "")
+                if facilities:
+                    return self._handle_facility_search(facilities)
+                return None
 
             if intent.name.startswith("POISONING_"):
                 text, df, _ = self._handle_poisoning(intent, query, entities)

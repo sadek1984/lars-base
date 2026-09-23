@@ -61,6 +61,11 @@ from modules.utils.prompt_loader import load_prompt
 from modules.query.advanced_handlers import AdvancedHandlersMixin
 from modules.query.entity_detection import EntityDetectionMixin
 from modules.query.entity_resolver import EntityResolver
+from modules.query.messages import CANNOT_COMPUTE_RATE_MESSAGE, POLITE_ERROR_MESSAGE
+
+
+class DatabaseUnavailableError(RuntimeError):
+    """The DuckDB file is missing or cannot be opened (user-actionable)."""
 from modules.query.time_period import TimePeriodMixin
 from modules.query.routing import RoutingMixin
 from modules.query.keyword_patterns import KeywordPatternsMixin
@@ -273,15 +278,17 @@ class CoreQueryEngine(
         """
         db_path = Path(self.db_path)
         if not db_path.exists():
-            raise RuntimeError(
+            raise DatabaseUnavailableError(
                 f"Database file not found: {db_path}\n"
                 "Upload your data via the Data Management page to continue."
             )
         try:
             return duckdb.connect(str(db_path), read_only=True)
         except Exception as exc:
-            raise RuntimeError(
-                f"Could not open database '{db_path.name}': {exc}"
+            # The DuckDB detail goes to the log (via __cause__), not to the user.
+            raise DatabaseUnavailableError(
+                f"Could not open database '{db_path.name}'. Please try again shortly "
+                "or re-upload the data via the Data Management page."
             ) from exc
     
 
@@ -291,28 +298,17 @@ class CoreQueryEngine(
     
 
 
-    def _handle_facility_search(self, query: str) -> Tuple[str, pd.DataFrame]:
-        """البحث عن العينات في منشأة معينة"""
+    def _resolved_facilities(self, query: str) -> List[str]:
+        """Facility names (exact DB values) named in `query`, via the resolver."""
+        res = self._resolve(query)
+        return list(res.facilities) if res is not None else []
+
+    def _handle_facility_search(self, facilities: List[str]) -> Tuple[str, pd.DataFrame]:
+        """Detected residues in the given facilities (exact "اسم المنشاة" values
+        resolved from the question — never text sliced around keywords)."""
+        facility_sql, params = self._in_clause("اسم المنشاة", facilities)
+        facility_name = " + ".join(facilities)
         con = self._get_connection()
-        
-        # استخراج اسم المنشأة من الاستعلام
-        # إزالة الكلمات المفتاحية الشائعة
-        facility_keywords = ['ابحث', 'عن', 'العينات', 'في', 'منشأة', 'منشاة', 'مصنع', 'مطعم', 
-                            'محل', 'متجر', 'جمعية', 'الجمعية', 'شركة', 'مؤسسة',
-                            'عينات', 'بحث', 'search', 'facility', 'samples']
-        words = query.split()
-        facility_name_parts = []
-        
-        for word in words:
-            if word.lower() not in facility_keywords and len(word) > 2:
-                facility_name_parts.append(word)
-        
-        facility_name = ' '.join(facility_name_parts)
-        
-        if not facility_name:
-            return "⚠️ لم أتمكن من استخراج اسم المنشأة من السؤال. يرجى تحديد اسم المنشأة.", pd.DataFrame()
-        
-        # البحث في قاعدة البيانات
         sql = f"""
         SELECT 
             "كود العينة"  AS sample_code,
@@ -326,12 +322,12 @@ class CoreQueryEngine(
             CASE WHEN is_above_limit = 1 THEN 'Above limit' ELSE 'Within limit' END AS status
         FROM chemistry_tidy
         WHERE is_detected = 1
-        AND "اسم المنشاة" LIKE '%{facility_name}%'
+        AND {facility_sql}
         ORDER BY TRY_STRPTIME("التاريخ", '%d/%m/%Y') DESC NULLS LAST
         LIMIT 50
         """
         
-        df = con.execute(sql).df()
+        df = con.execute(sql, params).df()
         con.close()
         
         if not df.empty:
@@ -461,6 +457,47 @@ class CoreQueryEngine(
 
     def process(self, query: str) -> Tuple[str, Optional[pd.DataFrame]]:
         """
+        Answer `query`. Wraps _process_unguarded() so that no handler failure
+        ever reaches the user as raw error text: any exception is logged with
+        its traceback and replaced by POLITE_ERROR_MESSAGE, and every result
+        passes the percentage sanity guard.
+        """
+        try:
+            response_text, df = self._process_unguarded(query)
+        except DatabaseUnavailableError as db_err:
+            logging.error(f"DB unavailable during query: {db_err.__cause__ or db_err}")
+            return str(db_err), None
+        except Exception:
+            logging.exception(f"Query failed: {query!r}")
+            return POLITE_ERROR_MESSAGE, None
+        return self._guard_percentages(response_text, df)
+
+    # Rate/percentage columns must lie in [0, 100]. Percent-of-MRL and
+    # exceedance columns are excluded: 250% of the MRL is a legitimate value.
+    _PCT_COLUMN_RE = re.compile(r"pct|rate|نسبة", re.IGNORECASE)
+    _PCT_EXEMPT_RE = re.compile(r"mrl|exceed|ratio", re.IGNORECASE)
+
+    def _guard_percentages(self, response_text: str, df: Optional[pd.DataFrame]):
+        """Replace the answer with CANNOT_COMPUTE_RATE_MESSAGE if any percentage
+        column holds a value outside 0–100 — a sign the rate was computed over
+        the wrong denominator. Logs the offending column instead of showing it."""
+        if df is None or df.empty:
+            return response_text, df
+        for col in df.columns:
+            name = str(col)
+            if not self._PCT_COLUMN_RE.search(name) or self._PCT_EXEMPT_RE.search(name):
+                continue
+            values = pd.to_numeric(df[col], errors="coerce").dropna()
+            if not values.empty and (values.min() < 0 or values.max() > 100):
+                logging.error(
+                    f"Percentage out of range in column {name!r}: "
+                    f"min={values.min()} max={values.max()} — answer suppressed"
+                )
+                return CANNOT_COMPUTE_RATE_MESSAGE, None
+        return response_text, df
+
+    def _process_unguarded(self, query: str) -> Tuple[str, Optional[pd.DataFrame]]:
+        """
         Process a query and return (response_text, DataFrame | None).
 
         Three-tier routing, in priority order:
@@ -523,6 +560,7 @@ class CoreQueryEngine(
             result = self._handle_count_samples_compliance_table(
                 detected_samples, detected_neighborhoods, is_non_compliant_ar,
                 date_filter=detected_period,
+                municipalities=resolution.municipalities if resolution is not None else None,
             )
 
         # ── Tier 1: Semantic pattern recognition ──────────────────────────────
@@ -552,9 +590,9 @@ class CoreQueryEngine(
         if result is None:
             try:
                 result = self._dispatch_keyword_patterns(ctx)
-            except RuntimeError as db_err:
+            except DatabaseUnavailableError as db_err:
                 # DB missing or corrupt — show a clear message instead of a stack trace
-                logging.error(f"DB connection error during query: {db_err}")
+                logging.error(f"DB connection error during query: {db_err.__cause__ or db_err}")
                 return str(db_err), None
 
         # ── Fallback: nothing matched ───────────────────────────────────────────
@@ -907,7 +945,9 @@ class CoreQueryEngine(
 
     def _handle_count_samples_compliance_table(self, samples: List[str], neighborhoods: List[str],
                                                  is_non_compliant: bool,
-                                                 date_filter: Optional[str] = None) -> Tuple[str, pd.DataFrame]:
+                                                 date_filter: Optional[str] = None,
+                                                 municipalities: Optional[List[str]] = None,
+                                                 ) -> Tuple[str, pd.DataFrame]:
         """
         Manager-style compliance summary based on sample_result (official lab
         verdict), NOT is_above_limit (technical per-pesticide exceedance).
@@ -944,6 +984,14 @@ class CoreQueryEngine(
             neighborhood_filter = "AND (" + " OR ".join('"الحى" LIKE ?' for _ in hood_variants) + ")"
             params += [f"%{v}%" for v in hood_variants]
 
+        # Municipality / association (exact DB values from the resolver), e.g.
+        # 'جمعية البطين الزراعية' — previously ignored, so the answer covered all data.
+        municipality_filter = ""
+        if municipalities:
+            mun_sql, mun_params = self._in_clause("اسم البلدية", municipalities)
+            municipality_filter = f"AND {mun_sql}"
+            params += mun_params
+
         date_clause = date_filter or ""
 
         sql = f"""
@@ -956,16 +1004,34 @@ class CoreQueryEngine(
         WHERE 1=1
         {sample_filter}
         {neighborhood_filter}
+        {municipality_filter}
         {date_clause}
         GROUP BY "اسم العينة"
         ORDER BY sample_count DESC
         """
         df = con.execute(sql, params).df()
+        # Headline totals are counted over the whole filter, not summed per
+        # product: some sample codes appear under more than one product name,
+        # so the per-product sum over-counts (e.g. 560 vs 530 distinct).
+        totals = con.execute(f"""
+        SELECT
+            COUNT(DISTINCT "كود العينة") AS sample_count,
+            COUNT(DISTINCT CASE WHEN sample_result = 'Non-Compliant' THEN "كود العينة" END) AS non_compliant,
+            COUNT(DISTINCT CASE WHEN sample_result = 'Compliant' THEN "كود العينة" END) AS compliant
+        FROM chemistry_tidy
+        WHERE 1=1
+        {sample_filter}
+        {neighborhood_filter}
+        {municipality_filter}
+        {date_clause}
+        """, params).df().iloc[0]
         con.close()
 
         type_display = " + ".join(samples) if samples else "All types"
         if neighborhoods:
             type_display += f" in {' + '.join(neighborhoods)}"
+        if municipalities:
+            type_display += f" — {' + '.join(municipalities)}"
         if date_filter:
             type_display += " (filtered by period)"
 
@@ -973,8 +1039,8 @@ class CoreQueryEngine(
             return f"⚠️ No samples found for **{type_display}**", df
 
         status_text = 'Non-Compliant' if is_non_compliant else 'Compliant'
-        total_count = int(df['sample_count'].sum())
-        total_target = int(df['non_compliant'].sum() if is_non_compliant else df['compliant'].sum())
+        total_count = int(totals['sample_count'])
+        total_target = int(totals['non_compliant'] if is_non_compliant else totals['compliant'])
 
         response = f"📊 **{status_text} samples (official sample_result) — {type_display}**\n\n"
         response += f"✅ Total unique samples: **{total_count}**\n"
@@ -1152,7 +1218,8 @@ class CoreQueryEngine(
         return response, df
     
     def _handle_neighborhood_ranking(self, date_filter: Optional[str] = None) -> Tuple[str, pd.DataFrame]:
-        """Rank neighborhoods by number of violations."""
+        """Rank neighborhoods by samples with at least one exceedance.
+        violation_rate_pct = violating samples / samples (never records / samples)."""
         con = self._get_connection()
         date_clause = date_filter or ""
         
@@ -1160,14 +1227,15 @@ class CoreQueryEngine(
         SELECT 
             "الحى"                             AS neighborhood,
             COUNT(DISTINCT "كود العينة")        AS total_samples,
-            SUM(CASE WHEN is_compliant = 0 THEN 1 ELSE 0 END) AS violations,
-            ROUND(SUM(CASE WHEN is_compliant = 0 THEN 1 ELSE 0 END) * 100.0 / 
+            SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) AS violations,
+            COUNT(DISTINCT CASE WHEN is_above_limit = 1 THEN "كود العينة" END) AS violating_samples,
+            ROUND(100.0 * COUNT(DISTINCT CASE WHEN is_above_limit = 1 THEN "كود العينة" END) /
                   NULLIF(COUNT(DISTINCT "كود العينة"), 0), 2) AS violation_rate_pct
         FROM chemistry_tidy
         WHERE "الحى" IS NOT NULL AND "الحى" != ''
         {date_clause}
         GROUP BY "الحى"
-        ORDER BY violations DESC
+        ORDER BY violating_samples DESC, violation_rate_pct DESC
         LIMIT 20
         """
         
@@ -1724,79 +1792,39 @@ class CoreQueryEngine(
                            When set, sample types are resolved from the DB.
             date_filter:   Optional SQL date filter fragment from _detect_time_period().
         """
-        con = self._get_connection()
-
-        # ── Build category → DB sample-name filter ──
-        # Maps category key to English keywords present in "اسم العينة" (DB stores English)
-        CATEGORY_EN_KEYWORDS: Dict[str, List[str]] = {
-            "Vegetables": [
-                "tomato", "cucumber", "zucchini", "pepper", "eggplant",
-                "beans", "okra", "potato", "carrot", "onion",
-            ],
-            "Fruits": [
-                "strawberry", "grape", "apple", "orange", "pomegranate",
-                "pear", "lemon", "lime", "berry", "date", "mango", "banana",
-            ],
-            "Spices": ["cardamom", "cumin", "thyme", "spice", "clove", "anise", "fennel"],
-            "Nuts": ["pistachio", "nuts", "almond", "cashew", "hazelnut", "pecan", "peanut", "sesame"],
-            "Grains": ["wheat", "rice", "corn", "lentil", "flour", "oat"],
-            "Leafy Greens": [
-                "lettuce", "parsley", "spinach", "arugula", "rocket",
-                "coriander", "cilantro", "dill", "molokhia", "mint",
-                "cauliflower", "broccoli", "cabbage",
-            ],
-        }
-        # Lowercase category key → نوع العينة DB value
-        CATEGORY_KEY_TO_DB: Dict[str, str] = {
-            "vegetable": "Vegetables",
-            "fruit": "Fruits",
-            "spice": "Spices",
-            "nut": "Nuts",
-            "grain": "Grains",
-            "leafy": "Leafy Greens",
-        }
-
-        # ── Build WHERE conditions ──
-        sample_conditions = []
-        if samples:
-            # Specific English DB sample names were given — direct LIKE match
-            for s in samples:
-                sample_conditions.append(f"\"اسم العينة\" LIKE '%{s}%'")
-        elif category_key:
-            # Resolve category to نوع العينة DB value (English)
-            db_category = CATEGORY_KEY_TO_DB.get(category_key)
-            if db_category:
-                # Use "نوع العينة" column which stores English category (Vegetables, Spices, etc.)
-                sample_conditions.append(f"\"نوع العينة\" = '{db_category}'")
-            elif category_key in CATEGORY_EN_KEYWORDS:
-                # Fallback: keyword-based matching on "اسم العينة"
-                en_members = CATEGORY_EN_KEYWORDS.get(category_key, [])
-                sample_conditions = [f"LOWER(\"اسم العينة\") LIKE '%{en}%'" for en in en_members]
-
-        sample_filter = f"AND ({' OR '.join(sample_conditions)})" if sample_conditions else ""
+        # Products (exact DB values) or the resolved "نوع العينة" category.
+        sample_sql, params, _ = self._category_or_samples_filter(category_key, samples)
+        if sample_sql is None:
+            return f"⚠️ فئة غير معروفة في البيانات: {category_key}", None
+        sample_filter = f"AND {sample_sql}"
 
         # ── Neighborhood filter ──
         neighborhood_filter = ""
         if neighborhoods:
-            hood_parts = []
+            hood_variants = []
             for n in neighborhoods:
-                for v in {n, n.replace("ا", "إ"), n.replace("ا", "أ"),
-                          n.replace("إ", "ا"), n.replace("أ", "ا")}:
-                    hood_parts.append(f"\"الحى\" LIKE '%{v}%'")
-            neighborhood_filter = f"AND ({' OR '.join(hood_parts)})"
+                hood_variants += sorted({n, n.replace("ا", "إ"), n.replace("ا", "أ"),
+                                         n.replace("إ", "ا"), n.replace("أ", "ا")})
+            neighborhood_filter = "AND (" + " OR ".join('"الحى" LIKE ?' for _ in hood_variants) + ")"
+            params = params + [f"%{v}%" for v in hood_variants]
 
         date_clause = date_filter or ""
 
         # ── Main SQL: violation count per sample name ──
+        # violations = exceeding detection records (the threshold's unit);
+        # the rate is sample-level: samples with any exceedance / samples.
         sql = f"""
         SELECT
             "اسم العينة" AS sample_name,
             COUNT(*) AS total_records,
             SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) AS violations,
+            COUNT(DISTINCT "كود العينة") AS samples,
+            COUNT(DISTINCT CASE WHEN is_above_limit = 1 THEN "كود العينة" END) AS violating_samples,
             ROUND(
-                100.0 * SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) / COUNT(*),
+                100.0 * COUNT(DISTINCT CASE WHEN is_above_limit = 1 THEN "كود العينة" END)
+                / NULLIF(COUNT(DISTINCT "كود العينة"), 0),
                 1
-            ) AS violation_pct
+            ) AS violation_rate_pct
         FROM chemistry_tidy
         WHERE is_detected = 1
             AND pesticide_name NOT IN ('NO DETECTION', 'NO DATA')
@@ -1804,16 +1832,17 @@ class CoreQueryEngine(
             {neighborhood_filter}
             {date_clause}
         GROUP BY "اسم العينة"
-        HAVING SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) > {threshold}
+        HAVING SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) > ?
         ORDER BY violations DESC
         """
 
-        df = con.execute(sql).df()
+        con = self._get_connection()
+        df = con.execute(sql, params + [threshold]).df()
         con.close()
 
         # ── Pretty column names for display ──
         if not df.empty:
-            df.columns = ["sample_type", "total_records", "violations", "violation_rate_pct"]
+            df = df.rename(columns={"sample_name": "sample_type"})
 
         # ── Build response ──
         cat_label = category_key if category_key else (" + ".join(samples) if samples else "All types")

@@ -19,7 +19,6 @@ import logging
 from typing import List, Optional, Tuple
 import pandas as pd
 
-from modules.query.mappings import CATEGORY_AR
 
 
 class AdvancedHandlersMixin:
@@ -445,12 +444,13 @@ class AdvancedHandlersMixin:
             response += " | ".join(f"{m}: **{n}** مبيد" for m, n in counts.items()) + "\n\n"
             response += df.to_markdown(index=False)
             return response, df
-        sql = """
+        sql = f"""
         SELECT
             "اسم البلدية" AS municipality,
             COUNT(DISTINCT "كود العينة") AS total_samples,
             SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) AS violations,
-            ROUND(100.0 * SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) /
+            COUNT(DISTINCT CASE WHEN is_above_limit = 1 THEN "كود العينة" END) AS violating_samples,
+            ROUND(100.0 * COUNT(DISTINCT CASE WHEN is_above_limit = 1 THEN "كود العينة" END) /
                   NULLIF(COUNT(DISTINCT "كود العينة"), 0), 1) AS violation_rate_pct
         FROM chemistry_tidy
         WHERE "اسم البلدية" IN (?, ?)
@@ -503,6 +503,30 @@ class AdvancedHandlersMixin:
         response += df.to_markdown(index=False)
         return response, df
 
+    def _handle_headline_totals(self, date_filter: Optional[str] = None) -> Tuple[str, pd.DataFrame]:
+        """Dataset-wide totals: unique samples, test records, official verdicts. D002."""
+        con = self._get_connection()
+        date_clause = date_filter or ""
+        df = con.execute(f"""
+            SELECT
+                COUNT(DISTINCT "كود العينة") AS unique_samples,
+                COUNT(*) AS total_records,
+                COUNT(DISTINCT CASE WHEN sample_result = 'Compliant' THEN "كود العينة" END) AS compliant_samples,
+                COUNT(DISTINCT CASE WHEN sample_result = 'Non-Compliant' THEN "كود العينة" END) AS non_compliant_samples
+            FROM chemistry_tidy
+            WHERE 1=1 {date_clause}
+        """).df()
+        con.close()
+        row = df.iloc[0]
+        response = (
+            "📊 **إجمالي العينات المستلمة:**\n\n"
+            f"✅ عدد العينات الفريدة (أكواد العينات): **{int(row['unique_samples']):,}**\n"
+            f"🧪 إجمالي السجلات (نتائج الفحص لكل مبيد): **{int(row['total_records']):,}**\n"
+            f"🟢 مطابقة: **{int(row['compliant_samples']):,}** | "
+            f"🔴 غير مطابقة: **{int(row['non_compliant_samples']):,}**"
+        )
+        return response, df
+
     def _handle_missing_field_pct(self, field: str) -> Tuple[str, pd.DataFrame]:
         """% of records missing a given field (الحى or اسم البلدية). Covers D035-D037."""
         col_map = {"neighborhood": '"الحى"', "municipality": '"اسم البلدية"'}
@@ -536,27 +560,21 @@ class AdvancedHandlersMixin:
         category_key: Optional[str] = None,
     ) -> Tuple[str, pd.DataFrame]:
         """Samples where concentration exceeded `multiplier`x the MRL. B018, B019."""
-        from modules.query.mappings import CATEGORY_AR
-        if samples:
-            conditions = [f"\"اسم العينة\" LIKE '%{s}%'" for s in samples]
-        elif category_key and category_key in CATEGORY_AR:
-            conditions = [f"\"اسم العينة\" LIKE '%{ar}%'" for ar in CATEGORY_AR[category_key]]
-        else:
-            conditions = ["1=1"]
-        sample_filter = f"({' OR '.join(conditions)})"
+        sample_filter, params, label = self._category_or_samples_filter(category_key, samples)
+        if sample_filter is None:
+            return f"⚠️ فئة غير معروفة في البيانات: {category_key}", pd.DataFrame()
         con = self._get_connection()
         sql = f"""
         SELECT "كود العينة" AS sample_code, "اسم العينة" AS sample_name,
                pesticide_name AS pesticide, concentration, limit_value AS mrl,
                ROUND(exceedance_ratio, 2) AS ratio
         FROM chemistry_tidy
-        WHERE is_detected = 1 AND limit_value > 0 AND exceedance_ratio >= {multiplier}
+        WHERE is_detected = 1 AND limit_value > 0 AND exceedance_ratio >= ?
           AND {sample_filter}
         ORDER BY exceedance_ratio DESC LIMIT 100
         """
-        df = con.execute(sql).df()
+        df = con.execute(sql, [float(multiplier)] + params).df()
         con.close()
-        label = " + ".join(samples) if samples else (category_key or "جميع العينات")
         if df.empty:
             return f"⚠️ لم أجد عينات تجاوزت {multiplier}× الحد المسموح في {label}", df
         response = f"📊 **عينات تجاوزت {multiplier}× الحد المسموح — {label}:**\n\n✅ العدد: **{len(df)}**\n\n"
@@ -644,17 +662,19 @@ class AdvancedHandlersMixin:
             return "⚠️ نوع غير معروف", pd.DataFrame()
         order_col = "violations" if metric == "count" else "violation_rate_pct"
         con = self._get_connection()
+        # col/order_col come from fixed maps above (never user text); n is bound.
         sql = f"""
         SELECT {col} AS entity_name, COUNT(DISTINCT "كود العينة") AS total_samples,
                SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) AS violations,
-               ROUND(100.0 * SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) /
-                     NULLIF(COUNT(DISTINCT "كود العينة"), 0), 1) AS violation_rate_pct
+               COUNT(DISTINCT CASE WHEN is_above_limit = 1 THEN "كود العينة" END) AS violating_samples,
+               ROUND(100.0 * COUNT(DISTINCT CASE WHEN is_above_limit = 1 THEN "كود العينة" END) /
+                  NULLIF(COUNT(DISTINCT "كود العينة"), 0), 1) AS violation_rate_pct
         FROM chemistry_tidy
         WHERE {col} IS NOT NULL
         GROUP BY {col} HAVING COUNT(DISTINCT "كود العينة") >= 5
-        ORDER BY {order_col} DESC LIMIT {n}
+        ORDER BY {order_col} DESC LIMIT ?
         """
-        df = con.execute(sql).df()
+        df = con.execute(sql, [int(n)]).df()
         con.close()
         if df.empty:
             return "⚠️ لم أجد بيانات كافية", df
@@ -667,25 +687,24 @@ class AdvancedHandlersMixin:
     ) -> Tuple[str, pd.DataFrame]:
         """
         Compare two categories (e.g. spices vs vegetables) on a chosen
-        metric: 'count' (sample counts), 'violations' (violation counts),
-        or 'avg_pesticides' (avg pesticide count per sample).
+        metric: 'count' (sample counts), 'violations' (violating samples and
+        the sample-level violation rate), or 'avg_pesticides' (avg pesticide
+        count per sample). Categories resolve to the stored "نوع العينة".
         Covers A045, B023, C014.
         """
-        from modules.query.mappings import CATEGORY_AR
-        cats = {"a": cat_a, "b": cat_b}
         rows = []
         con = self._get_connection()
-        for label, cat_key in cats.items():
-            ar_names = CATEGORY_AR.get(cat_key, [])
-            if not ar_names:
+        for cat_key in (cat_a, cat_b):
+            sample_filter, params, label = self._category_or_samples_filter(cat_key, [])
+            if sample_filter is None:
                 continue
-            conditions = [f"\"اسم العينة\" LIKE '%{ar}%'" for ar in ar_names]
-            sample_filter = f"({' OR '.join(conditions)})"
-
             if metric == "violations":
                 sql = f"""
-                SELECT COUNT(DISTINCT "كود العينة") AS total,
-                       SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) AS violations
+                SELECT COUNT(DISTINCT "كود العينة") AS samples,
+                       SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) AS violations,
+                       COUNT(DISTINCT CASE WHEN is_above_limit = 1 THEN "كود العينة" END) AS violating_samples,
+                       ROUND(100.0 * COUNT(DISTINCT CASE WHEN is_above_limit = 1 THEN "كود العينة" END) /
+                             NULLIF(COUNT(DISTINCT "كود العينة"), 0), 1) AS violation_rate_pct
                 FROM chemistry_tidy WHERE {sample_filter}
                 """
             elif metric == "avg_pesticides":
@@ -695,25 +714,25 @@ class AdvancedHandlersMixin:
                     FROM chemistry_tidy WHERE {sample_filter}
                     GROUP BY "كود العينة"
                 )
-                SELECT COUNT(*) AS total, ROUND(AVG(n), 2) AS avg_pesticides FROM counts
+                SELECT COUNT(*) AS samples, ROUND(AVG(n), 2) AS avg_pesticides FROM counts
                 """
             else:  # count
                 sql = f"""
-                SELECT COUNT(DISTINCT "كود العينة") AS total FROM chemistry_tidy
+                SELECT COUNT(DISTINCT "كود العينة") AS samples FROM chemistry_tidy
                 WHERE {sample_filter}
                 """
-            row = con.execute(sql).fetchone()
-            rows.append({"category": cat_key, "data": row})
+            row = con.execute(sql, params).df().iloc[0].to_dict()
+            rows.append({"category": label, **row})
         con.close()
 
         if len(rows) < 2:
             return "⚠️ تعذّرت المقارنة — تأكد من صحة اسم الفئتين", pd.DataFrame()
 
         df = pd.DataFrame(rows)
-        response = f"📊 **مقارنة {cat_a} مقابل {cat_b} ({metric}):**\n\n"
-        for r in rows:
-            response += f"• {r['category']}: {r['data']}\n"
+        response = f"📊 **مقارنة {rows[0]['category']} مقابل {rows[1]['category']}:**\n\n"
+        response += df.to_markdown(index=False)
         return response, df
+
     def _handle_missing_mrl_stats(self, want: str) -> Tuple[str, pd.DataFrame]:
         """
         Non-compliant samples / residues with no recorded MRL limit_value.
@@ -884,26 +903,20 @@ class AdvancedHandlersMixin:
     # D023 — % of total violation RECORDS attributable to spice samples
     # ──────────────────────────────────────────────────────────────────────
     def _handle_category_violation_share(self, category_key: str) -> Tuple[str, pd.DataFrame]:
-        con = self._get_connection()
-        conditions = [f"'%{ar}%'" for ar in CATEGORY_AR.get(category_key, [])]
-        # sample_summary.sample_category stores the DB "نوع العينة" value
-        # (e.g. 'Spices'), NOT the Arabic per-item names in CATEGORY_AR —
-        # use the same category-key -> DB-value map as elsewhere.
-        db_category_map = {
-            "vegetable": "Vegetables", "fruit": "Fruits", "spice": "Spices",
-            "nut": "Nuts", "grain": "Grains", "leafy": "Leafy Greens",
-        }
-        db_category = db_category_map.get(category_key)
+        resolver = self._get_resolver()
+        db_category = resolver.category_db_value(category_key) if resolver else None
         if not db_category:
-            con.close()
             return f"⚠️ فئة غير معروفة: {category_key}", pd.DataFrame()
+        label = resolver.label_for_category(db_category)
 
+        con = self._get_connection()
         try:
-            row = con.execute(f"""
+            # sample_summary.sample_category stores the DB "نوع العينة" value.
+            row = con.execute("""
                 SELECT
-                    (SELECT SUM(violation_count) FROM sample_summary WHERE sample_category = '{db_category}') AS category_violations,
+                    (SELECT SUM(violation_count) FROM sample_summary WHERE sample_category = ?) AS category_violations,
                     (SELECT SUM(violation_count) FROM sample_summary) AS total_violations
-            """).df().iloc[0]
+            """, [db_category]).df().iloc[0]
         except Exception:
             con.close()
             return (
@@ -917,15 +930,15 @@ class AdvancedHandlersMixin:
         total_v = int(row["total_violations"] or 0)
         pct = round(100.0 * cat_v / total_v, 1) if total_v else 0.0
 
-        label = {"vegetable": "الخضار", "fruit": "الفواكه", "spice": "التوابل",
-                  "nut": "المكسرات", "grain": "الحبوب", "leafy": "الورقيات"}.get(category_key, category_key)
         response = (
             f"📊 **نسبة {label} من إجمالي المخالفات:**\n\n"
             f"مخالفات {label}: **{cat_v}**\n"
             f"إجمالي المخالفات: **{total_v}**\n"
             f"النسبة: **{pct}%**"
         )
-        return response, row.to_frame().T
+        out = row.to_frame().T
+        out["share_pct"] = pct  # visible to the process() percentage guard
+        return response, out
 
     # ──────────────────────────────────────────────────────────────────────
     # B050 — top 10 readings by % exceedance (per-reading, no aggregate
@@ -1050,7 +1063,8 @@ class AdvancedHandlersMixin:
             {period_expr} AS period,
             COUNT(DISTINCT "كود العينة") AS sample_count,
             SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) AS violations,
-            ROUND(100.0 * SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) /
+            COUNT(DISTINCT CASE WHEN is_above_limit = 1 THEN "كود العينة" END) AS violating_samples,
+            ROUND(100.0 * COUNT(DISTINCT CASE WHEN is_above_limit = 1 THEN "كود العينة" END) /
                   NULLIF(COUNT(DISTINCT "كود العينة"), 0), 1) AS violation_rate_pct
         FROM chemistry_tidy
         WHERE "التاريخ" IS NOT NULL
@@ -1074,7 +1088,7 @@ class AdvancedHandlersMixin:
         response = (
             f"📈 **أعلى فترة من حيث نسبة المخالفة:**\n\n"
             f"الفترة: **{top['period']}** | نسبة المخالفة: **{top['violation_rate_pct']}%** "
-            f"| العينات: **{int(top['sample_count'])}** | المخالفات: **{int(top['violations'])}**"
+            f"| العينات: **{int(top['sample_count'])}** | العينات المخالفة: **{int(top['violating_samples'])}**"
         )
         return response, df
 
@@ -1326,26 +1340,26 @@ class AdvancedHandlersMixin:
     # B049 — category failure rate vs overall average
     # ──────────────────────────────────────────────────────────────────────
     def _handle_category_vs_overall_rate(self, category_key: str) -> Tuple[str, pd.DataFrame]:
-        con = self._get_connection()
-        conditions = [f"\"اسم العينة\" LIKE '%{ar}%'" for ar in CATEGORY_AR.get(category_key, [])]
-        cat_filter = f"({' OR '.join(conditions)})" if conditions else "1=1"
+        """Category violation rate vs the overall rate, both sample-level:
+        samples with any exceedance / samples."""
+        cat_filter, params, label = self._category_or_samples_filter(category_key, [])
+        if cat_filter is None:
+            return f"⚠️ فئة غير معروفة: {category_key}", pd.DataFrame()
+        rate = ('ROUND(100.0 * COUNT(DISTINCT CASE WHEN is_above_limit = 1 THEN "كود العينة" END) / '
+                'NULLIF(COUNT(DISTINCT "كود العينة"), 0), 1)')
         sql = f"""
         SELECT
-            (SELECT ROUND(100.0 * SUM(CASE WHEN is_above_limit=1 THEN 1 ELSE 0 END) /
-                  NULLIF(COUNT(DISTINCT "كود العينة"),0), 1)
-             FROM chemistry_tidy WHERE {cat_filter}) AS category_rate,
-            (SELECT ROUND(100.0 * SUM(CASE WHEN is_above_limit=1 THEN 1 ELSE 0 END) /
-                  NULLIF(COUNT(DISTINCT "كود العينة"),0), 1)
-             FROM chemistry_tidy) AS overall_rate
+            (SELECT {rate} FROM chemistry_tidy WHERE {cat_filter}) AS category_rate,
+            (SELECT {rate} FROM chemistry_tidy) AS overall_rate
         """
-        row = con.execute(sql).df().iloc[0]
+        con = self._get_connection()
+        row = con.execute(sql, params).df().iloc[0]
         con.close()
-        label = {"vegetable": "الخضار", "fruit": "الفواكه", "spice": "التوابل",
-                  "nut": "المكسرات", "grain": "الحبوب", "leafy": "الورقيات"}.get(category_key, category_key)
         response = (
-            f"📊 **نسبة الرسوب — {label} مقابل المعدل العام:**\n\n"
+            f"📊 **نسبة العينات المخالفة — {label} مقابل المعدل العام:**\n\n"
             f"نسبة {label}: **{row['category_rate']}%**\n"
-            f"المعدل العام: **{row['overall_rate']}%**"
+            f"المعدل العام: **{row['overall_rate']}%**\n\n"
+            f"*(النسبة = عدد العينات التي تجاوز فيها مبيد واحد على الأقل الحد ÷ عدد العينات)*"
         )
         return response, row.to_frame().T
 

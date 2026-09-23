@@ -41,8 +41,16 @@ POISONING_INTENTS = [
         "id": "psn.trend",
         "patterns_ar": [r"اتجاه|منحن[يى]|شهري|بمرور الوقت|تطور"],
         "patterns_en": [r"trend|monthly|over time|by month"],
-        "sql": "SELECT month_label, incidents, people_affected, convictions "
-               "FROM v_poisoning_monthly",
+        # Reads poisoning_incidents directly instead of v_poisoning_monthly:
+        # on DuckDB >= 1.4 date_trunc(TIMESTAMP) returns DATE, so the view's
+        # stored TIMESTAMP signature no longer binds ("Contents of view were
+        # altered"). Same columns as the view; the explicit CAST keeps the
+        # month type stable across DuckDB versions without writing to the DB.
+        "sql": "SELECT strftime(CAST(date_trunc('month', incident_date) AS DATE), '%Y-%m') AS month_label, "
+               "COUNT(*) AS incidents, SUM(cases_count) AS people_affected, "
+               "SUM(CASE WHEN decision_code = 'CONVICTED' THEN 1 ELSE 0 END) AS convictions "
+               "FROM poisoning_incidents WHERE incident_date IS NOT NULL "
+               "GROUP BY 1 ORDER BY 1",
         "render": "line_chart",
         "chart": {"x": "month_label", "y": ["incidents", "people_affected"]},
     },

@@ -33,6 +33,7 @@ Usage:
 """
 
 import csv
+import re
 import importlib
 import sys
 import time
@@ -91,6 +92,20 @@ def call_engine(engine, question: str):
 # the only reliable "did it actually answer" signal available from
 # process()'s 2-tuple return; there is no meta dict to inspect.
 _UNKNOWN_MARKER = "Sorry, I couldn't fully understand your question"
+
+
+# Error text that must never count as an answer: raw DuckDB/Python errors that
+# leaked into the reply, the poisoning module's old "could not run query" prefix,
+# and the engine's polite catch-all message (core_query_engine.POLITE_ERROR_MESSAGE).
+_ERROR_TEXT_RE = re.compile(
+    r"(Binder|Catalog|Parser|Conversion|Invalid Input|Out of Range) Error"
+    r"|Traceback \(most recent|تعذر تنفيذ الاستعلام|حدث خطأ أثناء معالجة سؤالك"
+)
+
+
+def is_error_text(text: str) -> bool:
+    """True if the reply is (or contains) an error rather than an answer."""
+    return bool(text) and bool(_ERROR_TEXT_RE.search(text))
 
 
 def is_unanswered(text: str) -> bool:
@@ -164,7 +179,8 @@ def main():
             text, df, meta = call_engine(engine, question)
             latency_ms = round((time.perf_counter() - t0) * 1000, 1)
 
-            record["status"] = "unanswered" if is_unanswered(text) else "ok"
+            record["status"] = ("error_text" if is_error_text(text)
+                                else "unanswered" if is_unanswered(text) else "ok")
             record["tier_hit"] = infer_tier(meta, text)
             record["handler"] = meta.get("handler", meta.get("intent", ""))
             record["generated_sql_present"] = bool(meta.get("generated_sql"))
@@ -194,10 +210,11 @@ def main():
     n_ok = sum(1 for r in results if r["status"] == "ok")
     n_unanswered = sum(1 for r in results if r["status"] == "unanswered")
     n_err = sum(1 for r in results if r["status"] == "exception")
+    n_errtext = sum(1 for r in results if r["status"] == "error_text")
     n_zero = sum(1 for r in results if r["status"] == "ok" and r["row_count"] in (0, "0"))
     print(f"\nDone. {out_path} written.")
     print(f"  ok (answered): {n_ok}  unanswered (fell to _handle_unknown_query): {n_unanswered}"
-          f"  exceptions: {n_err}  zero-row among 'ok': {n_zero}")
+          f"  exceptions: {n_err}  error-text answers: {n_errtext}  zero-row among 'ok': {n_zero}")
     if n_err:
         print("  Review stderr above for tracebacks on failing IDs.")
 
