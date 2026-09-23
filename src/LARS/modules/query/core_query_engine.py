@@ -282,7 +282,7 @@ class CoreQueryEngine(
         FROM chemistry_tidy
         WHERE is_detected = 1
         AND "اسم المنشاة" LIKE '%{facility_name}%'
-        ORDER BY "التاريخ" DESC
+        ORDER BY TRY_STRPTIME("التاريخ", '%d/%m/%Y') DESC NULLS LAST
         LIMIT 50
         """
         

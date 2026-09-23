@@ -134,7 +134,7 @@ def get_residue_data_for_sample(sample_type_arabic: str) -> List[Dict[str, Any]]
         FROM chemistry_tidy 
         {sample_filter}
         AND pesticide_name NOT IN ('NO DATA')
-        ORDER BY "التاريخ" ASC
+        ORDER BY TRY_STRPTIME("التاريخ", '%d/%m/%Y') ASC NULLS LAST
         LIMIT 2000
         """
         

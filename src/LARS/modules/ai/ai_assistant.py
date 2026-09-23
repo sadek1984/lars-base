@@ -203,7 +203,7 @@ def process_data_query_sql(query: str, model, include_risk: bool = False):
                                    \"كود العينة\" as sample_code, is_detected
                             FROM chemistry_tidy
                             WHERE pesticide_name NOT IN ('NO DATA') {sample_filter}
-                            ORDER BY \"التاريخ\" ASC LIMIT 2000
+                            ORDER BY TRY_STRPTIME(\"التاريخ\", '%d/%m/%Y') ASC NULLS LAST LIMIT 2000
                         """).df()
                         con.close()
                         residue_data = residue_df.to_dict("records")
