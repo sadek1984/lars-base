@@ -92,20 +92,20 @@ class EntityResolver:
     def __init__(self, con, aliases_csv: Path = ALIASES_CSV):
         rows = con.execute(
             'SELECT DISTINCT "اسم العينة", "نوع العينة" FROM chemistry_tidy '
-            'WHERE "اسم العينة" IS NOT NULL'
+            'WHERE "اسم العينة" IS NOT NULL ORDER BY 1, 2'
         ).fetchall()
         self.products: List[str] = sorted({r[0] for r in rows})
         self.product_tokens: Dict[str, Tuple[str, ...]] = {p: _en_tokens(p) for p in self.products}
         self.db_categories: Set[str] = {r[1] for r in rows if r[1]}
         self.db_municipalities: List[str] = [r[0] for r in con.execute(
-            'SELECT DISTINCT "اسم البلدية" FROM chemistry_tidy WHERE "اسم البلدية" IS NOT NULL'
+            'SELECT DISTINCT "اسم البلدية" FROM chemistry_tidy WHERE "اسم البلدية" IS NOT NULL ORDER BY 1'
         ).fetchall()]
         self.db_facilities: List[str] = [r[0] for r in con.execute(
-            'SELECT DISTINCT "اسم المنشاة" FROM chemistry_tidy WHERE "اسم المنشاة" IS NOT NULL'
+            'SELECT DISTINCT "اسم المنشاة" FROM chemistry_tidy WHERE "اسم المنشاة" IS NOT NULL ORDER BY 1'
         ).fetchall()]
         pesticides = [r[0] for r in con.execute(
             "SELECT DISTINCT pesticide_name FROM chemistry_tidy "
-            "WHERE pesticide_name NOT IN ('NO DETECTION', 'NO DATA')"
+            "WHERE pesticide_name NOT IN ('NO DETECTION', 'NO DATA') ORDER BY 1"
         ).fetchall()]
 
         vocab: Dict[str, List[Tuple[str, str]]] = {}
@@ -125,9 +125,14 @@ class EntityResolver:
                 self.alias_keys.setdefault(_key(t), []).append(v)
         self.head_keys = {_key(t): v for t, v in vocab.get("product_head", [])}
         self.head_tokens = set(self.head_keys.values())
-        # Processed forms ('Almond Tahini') are a different product/MRL context
-        # from the raw commodity: included only when the question names the form.
-        self.processed_tokens = {v for _, v in vocab.get("processed_form", [])}
+        # Processed forms ('Almond Tahini', 'Date Molasses') are a different
+        # product/MRL context from the raw commodity: included only when the
+        # question names the form. Scope '*' applies to every commodity, a
+        # token ('date') only to that one — so 'powder' splits Date Powder from
+        # "تمر" while Pistachio Powder stays under "الفستق".
+        self.processed_scopes: Dict[str, Set[str]] = {}
+        for token, scope in vocab.get("processed_form", []):
+            self.processed_scopes.setdefault(token, set()).add(scope)
         self.qualifier_keys = {_key(t)[0]: v for t, v in vocab.get("product_qualifier", [])}
         self.group_keys = {_key(t): v for t, v in vocab.get("pesticide_group", [])}
         self.sample_keys = {_key(k): v for k, v in SAMPLE_CORRECTIONS.items() if _key(k)}
@@ -197,7 +202,8 @@ class EntityResolver:
             head = toks[-1]
             if head in self.head_tokens and head not in req:
                 continue
-            if any(t in self.processed_tokens and t not in req for t in toks):
+            if any(t not in req and ("*" in self.processed_scopes.get(t, ()) or self.processed_scopes.get(t, set()) & req)
+                   for t in toks):
                 continue
             out.append(p)
         return out

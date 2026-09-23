@@ -222,7 +222,10 @@ class RoutingMixin:
             
             if intent == Intent.PESTICIDE_STATISTICS and entities.pesticide:
                 return self._handle_pesticide_stats(
-                    entities.pesticide, entities.samples, entities.stat_types, date_filter=date_filter
+                    entities.pesticide, entities.samples, entities.stat_types, date_filter=date_filter,
+                    category=entities.category,
+                    compare_categories=self._resolve(entities.raw_query or "").categories
+                    if self._get_resolver() else None,
                 )
             
             # ── Sample counting ──
@@ -296,7 +299,7 @@ class RoutingMixin:
             AND {sample_filter}
             {date_clause}
             GROUP BY "اسم العينة"
-            ORDER BY detections DESC
+            ORDER BY detections DESC, "اسم العينة"
             """
             df = con.execute(sql, params).df()
             con.close()
@@ -322,7 +325,7 @@ class RoutingMixin:
         AND ({pest_sql})
         AND {sample_filter}
         {date_clause}
-        ORDER BY "كود العينة" DESC
+        ORDER BY "كود العينة" DESC, "اسم العينة", pesticide_name, concentration
         LIMIT 100
         """
         df = con.execute(sql, params).df()

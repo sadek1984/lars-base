@@ -362,7 +362,7 @@ class CoreQueryEngine(
                 variants.append(n.replace('إ', 'ا'))
             if 'أ' in n:
                 variants.append(n.replace('أ', 'ا'))
-            for v in set(variants):
+            for v in sorted(set(variants)):
                 hood_conditions.append(f"\"الحى\" LIKE '%{v}%'")
         neighborhood_filter = f"AND ({' OR '.join(hood_conditions)})"
         
@@ -424,7 +424,7 @@ class CoreQueryEngine(
             SUM(CASE WHEN has_detection = 0 THEN 1 ELSE 0 END) AS pesticide_free
         FROM sample_status
         GROUP BY neighborhood, sample_name
-        ORDER BY neighborhood, total_count DESC
+        ORDER BY neighborhood, total_count DESC, sample_name
         """
         
         df = con.execute(sql).df()
@@ -556,7 +556,11 @@ class CoreQueryEngine(
         is_non_compliant_ar = any(kw in query for kw in non_compliant_ar_kws)
         is_compliant_ar = (not is_non_compliant_ar) and any(kw in query for kw in compliant_ar_kws)
 
-        if is_non_compliant_ar or is_compliant_ar:
+        # Rate breakdowns by municipality / neighborhood / month must win over the
+        # compliance override below, which matches 'المطابقة' in e.g. D011/D019.
+        result = self._dispatch_rate_breakdown(ctx)
+
+        if result is None and (is_non_compliant_ar or is_compliant_ar):
             result = self._handle_count_samples_compliance_table(
                 detected_samples, detected_neighborhoods, is_non_compliant_ar,
                 date_filter=detected_period,
@@ -636,7 +640,7 @@ class CoreQueryEngine(
         {date_clause}
         GROUP BY "كود العينة", "اسم العينة"
         HAVING COUNT(*) = {n}
-        ORDER BY "كود العينة" DESC
+        ORDER BY "كود العينة" DESC, "اسم العينة"
         LIMIT 100
         """
         
@@ -702,7 +706,7 @@ class CoreQueryEngine(
             {sample_filter}
             {date_clause}
             GROUP BY "كود العينة", "اسم العينة"
-            ORDER BY "كود العينة" DESC
+            ORDER BY "كود العينة" DESC, "اسم العينة"
             """
             zero_df = con.execute(zero_sql).df()
             all_dfs.append(zero_df)
@@ -737,7 +741,7 @@ class CoreQueryEngine(
             {date_clause}
             GROUP BY "كود العينة", "اسم العينة"
             HAVING COUNT(*) = {n}
-            ORDER BY "كود العينة" DESC
+            ORDER BY "كود العينة" DESC, "اسم العينة"
             """
             n_df = con.execute(n_sql).df()
             all_dfs.append(n_df)
@@ -766,7 +770,7 @@ class CoreQueryEngine(
         # ── Summary table ──
         summary_df = pd.DataFrame(summary_rows)
         if not summary_df.empty:
-            summary_df = summary_df.sort_values(by='pesticide_count')
+            summary_df = summary_df.sort_values(by='pesticide_count', kind='stable')
     
         # ── Build final response ──
         counts_display = ' + '.join(
@@ -811,7 +815,7 @@ class CoreQueryEngine(
                     variants.append(n.replace('إ', 'ا'))
                 if 'أ' in n:
                     variants.append(n.replace('أ', 'ا'))
-                for v in set(variants):
+                for v in sorted(set(variants)):
                     hood_conditions.append(f"\"الحى\" LIKE '%{v}%'")
             neighborhood_filter = f"AND ({' OR '.join(hood_conditions)})"
         
@@ -839,7 +843,7 @@ class CoreQueryEngine(
             SUM(CASE WHEN has_violation = 0 THEN 1 ELSE 0 END) AS below_limit
         FROM sample_status
         GROUP BY sample_name
-        ORDER BY sample_count DESC
+        ORDER BY sample_count DESC, sample_name
         """
         
         df = con.execute(sql).df()
@@ -1007,7 +1011,7 @@ class CoreQueryEngine(
         {municipality_filter}
         {date_clause}
         GROUP BY "اسم العينة"
-        ORDER BY sample_count DESC
+        ORDER BY sample_count DESC, sample_type
         """
         df = con.execute(sql, params).df()
         # Headline totals are counted over the whole filter, not summed per
@@ -1070,7 +1074,7 @@ class CoreQueryEngine(
         AND {sample_filter}
         {date_clause}
         GROUP BY pesticide_name
-        ORDER BY detections DESC
+        ORDER BY detections DESC, pesticide_name
         LIMIT 50
         """
         
@@ -1194,7 +1198,7 @@ class CoreQueryEngine(
         AND ({pest_sql})
         AND {sample_sql}
         {date_clause}
-        ORDER BY "كود العينة" DESC
+        ORDER BY "كود العينة" DESC, "اسم العينة", pesticide_name, concentration
         LIMIT 100
         """
         
@@ -1298,7 +1302,7 @@ class CoreQueryEngine(
         AND pesticide_name NOT IN ('NO DETECTION', 'NO DATA')
         {date_clause}
         GROUP BY pesticide_name
-        ORDER BY detections DESC
+        ORDER BY detections DESC, pesticide_name
         """
         
         pesticide_stats_df = con.execute(pesticide_stats_sql).df()
@@ -1331,41 +1335,54 @@ class CoreQueryEngine(
     
     def _handle_pesticide_stats(self, pesticide: str, samples: List[str], 
                                  stats_requested: List[str],
-                                 date_filter: Optional[str] = None) -> Tuple[str, pd.DataFrame]:
-        """Statistics for a specific pesticide."""
-        con = self._get_connection()
-        
-        sample_filter = ""
-        if samples:
-            sample_filter = f"AND {self._build_sample_filter(samples)}"
+                                 date_filter: Optional[str] = None,
+                                 category: Optional[str] = None,
+                                 compare_categories: Optional[List[str]] = None) -> Tuple[str, pd.DataFrame]:
+        """Statistics for a specific pesticide, over every DB spelling the
+        typo-tolerant filter matches (e.g. imidacloprid + imidaclprid + …).
+
+        Previously grouped by pesticide_name and reported df.iloc[0] with no
+        ORDER BY — DuckDB returns groups in no fixed order, so the answer was
+        whichever spelling came first (often a 1-detection typo). Now one
+        aggregate row, and the spellings combined are listed.
+
+        compare_categories (2+ resolved DB categories, e.g. spices vs
+        vegetables) returns one row per category instead."""
+        if compare_categories and len(compare_categories) > 1 and not samples:
+            return self._pesticide_stats_by_category(pesticide, compare_categories, date_filter)
+        sample_sql, params, scope_label = self._category_or_samples_filter(category, samples)
+        if sample_sql is None:
+            return f"⚠️ فئة غير معروفة في البيانات: {category}", pd.DataFrame()
+        pest_sql, pest_params = get_pesticide_sql_filter_params(pesticide)
         date_clause = date_filter or ""
-        
+
         sql = f"""
         SELECT 
-            pesticide_name  AS pesticide,
             COUNT(*)        AS detections,
             ROUND(MIN(concentration), 4) AS min_concentration,
             ROUND(MAX(concentration), 4) AS max_concentration,
             ROUND(AVG(concentration), 4) AS avg_concentration,
             ROUND(MEDIAN(concentration), 4) AS median_concentration,
+            ROUND(STDDEV_SAMP(concentration), 4) AS std_concentration,
             ROUND(MAX(concentration) - MIN(concentration), 4) AS range,
             ROUND(MAX(limit_value), 4) AS MRL,
-            SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) AS violations
+            SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) AS violations,
+            STRING_AGG(DISTINCT pesticide_name, ', ' ORDER BY pesticide_name) AS spellings_matched
         FROM chemistry_tidy
         WHERE is_detected = 1
-        AND ({get_pesticide_sql_filter(pesticide)})
-        {sample_filter}
+        AND ({pest_sql})
+        AND {sample_sql}
         {date_clause}
-        GROUP BY pesticide_name
         """
-        
-        df = con.execute(sql).df()
+        con = self._get_connection()
+        df = con.execute(sql, pest_params + params).df()
         con.close()
         
-        sample_display = ' + '.join(samples) if samples else 'All sample types'
+        sample_display = scope_label if (samples or category) else 'All sample types'
         
-        if not df.empty:
+        if not df.empty and int(df['detections'].iloc[0]) > 0:
             row = df.iloc[0]
+            df.insert(0, 'pesticide', pesticide)
             response = f"📊 **Statistics for {pesticide}**\n"
             response += f"🧪 In: {sample_display}\n\n"
             response += f"📈 **Statistics:**\n"
@@ -1374,14 +1391,54 @@ class CoreQueryEngine(
             response += f"• Max concentration: **{row['max_concentration']}** mg/kg\n"
             response += f"• Average: **{row['avg_concentration']}** mg/kg\n"
             response += f"• Median: **{row['median_concentration']}** mg/kg\n"
+            response += f"• Standard deviation: **{row['std_concentration']}** mg/kg\n"
             response += f"• Range: **{row['range']}** mg/kg\n"
             response += f"• MRL limit: **{row['MRL']}** mg/kg\n"
             response += f"• Violations: **{int(row['violations'])}**\n"
+            response += f"• Spellings combined: {row['spellings_matched']}\n"
         else:
             response = f"⚠️ **{pesticide}** not found in **{sample_display}**"
+            df = pd.DataFrame()
         
         return response, df
     
+    def _pesticide_stats_by_category(self, pesticide: str, categories: List[str],
+                                     date_filter: Optional[str] = None) -> Tuple[str, pd.DataFrame]:
+        """Same statistics as _handle_pesticide_stats, one row per category."""
+        pest_sql, pest_params = get_pesticide_sql_filter_params(pesticide)
+        cat_sql, cat_params = self._in_clause("نوع العينة", categories)
+        date_clause = date_filter or ""
+        con = self._get_connection()
+        df = con.execute(f"""
+        SELECT
+            "نوع العينة"    AS category,
+            COUNT(*)        AS detections,
+            ROUND(MIN(concentration), 4) AS min_concentration,
+            ROUND(MAX(concentration), 4) AS max_concentration,
+            ROUND(AVG(concentration), 4) AS avg_concentration,
+            ROUND(MEDIAN(concentration), 4) AS median_concentration,
+            ROUND(STDDEV_SAMP(concentration), 4) AS std_concentration,
+            SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) AS violations
+        FROM chemistry_tidy
+        WHERE is_detected = 1 AND ({pest_sql}) AND {cat_sql}
+        {date_clause}
+        GROUP BY "نوع العينة"
+        ORDER BY "نوع العينة"
+        """, pest_params + cat_params).df()
+        con.close()
+        resolver = self._get_resolver()
+        labels = [resolver.label_for_category(c) if resolver else c for c in categories]
+        if df.empty:
+            return f"⚠️ **{pesticide}** not found in **{' / '.join(labels)}**", df
+        if resolver:
+            df["category"] = df["category"].map(resolver.label_for_category)
+        missing = [l for l in labels if l not in set(df["category"])]
+        response = f"📊 **Statistics for {pesticide} — {' vs '.join(labels)}**\n\n"
+        response += df.to_markdown(index=False)
+        if missing:
+            response += f"\n\n⚠️ لم يُرصد {pesticide} في: {'، '.join(missing)}"
+        return response, df
+
     def _handle_recipient_establishment_query(self, name: str, search_type: str,
                                                samples: List[str], is_unique: bool,
                                                is_compliant: bool, is_non_compliant: bool) -> Tuple[str, pd.DataFrame]:

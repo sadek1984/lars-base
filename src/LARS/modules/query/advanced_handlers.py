@@ -77,7 +77,7 @@ class AdvancedHandlersMixin:
           AND {sample_filter}
           {group_filter}
         GROUP BY "اسم العينة", pesticide_name
-        ORDER BY mean_conc DESC
+        ORDER BY mean_conc DESC, "اسم العينة", pesticide_name
         """
         df = con.execute(sql, params).df()
         con.close()
@@ -182,7 +182,7 @@ class AdvancedHandlersMixin:
                 ELSE '🔴 ضعيف'
             END                 AS تقييم_الجودة
         FROM qi_calc
-        ORDER BY quality_index DESC
+        ORDER BY quality_index DESC, sample_code, sample_name
         """
         df = con.execute(sql, params).df()
         con.close()
@@ -253,7 +253,7 @@ class AdvancedHandlersMixin:
               AND {sample_filter}
               AND "كود العينة" IN (SELECT "كود العينة" FROM eligible_samples)
             GROUP BY pesticide_name, "اسم العينة"
-            ORDER BY detections DESC
+            ORDER BY detections DESC, pesticide_name, "اسم العينة"
             """
         else:
             sql = f"""
@@ -267,7 +267,7 @@ class AdvancedHandlersMixin:
               AND pesticide_name NOT IN ('NO DETECTION', 'NO DATA')
               AND {sample_filter}
             GROUP BY pesticide_name, "اسم العينة"
-            ORDER BY detections DESC
+            ORDER BY detections DESC, pesticide_name, "اسم العينة"
             """
 
         df = con.execute(sql).df()
@@ -288,7 +288,7 @@ class AdvancedHandlersMixin:
                 total_violations=("violations", "sum"),
             )
             .reset_index()
-            .sort_values("total_detections", ascending=False)
+            .sort_values(["total_detections", "chemical_group"], ascending=[False, True])
         )
         group_summary.columns = [
             "المجموعة الكيميائية", "عدد المبيدات", "إجمالي الاكتشافات", "إجمالي المخالفات"
@@ -404,7 +404,7 @@ class AdvancedHandlersMixin:
           AND pesticide_name NOT IN ('NO DETECTION', 'NO DATA')
           AND "اسم البلدية" = ?
         GROUP BY pesticide_name
-        ORDER BY detections DESC
+        ORDER BY detections DESC, pesticide_name
         LIMIT 50
         """
         df = con.execute(sql, [municipality]).df()
@@ -433,7 +433,7 @@ class AdvancedHandlersMixin:
               AND pesticide_name NOT IN ('NO DETECTION', 'NO DATA')
               AND "اسم البلدية" IN (?, ?)
             GROUP BY "اسم البلدية", pesticide_name
-            ORDER BY "اسم البلدية", detections DESC
+            ORDER BY "اسم البلدية", detections DESC, pesticide_name
             """
             df = con.execute(sql, [mun_a, mun_b]).df()
             con.close()
@@ -454,7 +454,7 @@ class AdvancedHandlersMixin:
                   NULLIF(COUNT(DISTINCT "كود العينة"), 0), 1) AS violation_rate_pct
         FROM chemistry_tidy
         WHERE "اسم البلدية" IN (?, ?)
-        GROUP BY "اسم البلدية"
+        GROUP BY "اسم البلدية" ORDER BY "اسم البلدية"
         """
         df = con.execute(sql, [mun_a, mun_b]).df()
         con.close()
@@ -476,7 +476,7 @@ class AdvancedHandlersMixin:
                 COUNT(DISTINCT "كود العينة") AS sample_count
             FROM chemistry_tidy
             GROUP BY "اسم البلدية", "اسم العينة"
-            ORDER BY municipality, sample_count DESC
+            ORDER BY municipality, sample_count DESC, sample_type
             """
             df = con.execute(sql).df()
             con.close()
@@ -493,7 +493,7 @@ class AdvancedHandlersMixin:
         FROM chemistry_tidy
         WHERE "اسم البلدية" = ?
         GROUP BY "اسم العينة"
-        ORDER BY sample_count DESC
+        ORDER BY sample_count DESC, sample_type
         """
         df = con.execute(sql, [municipality]).df()
         con.close()
@@ -620,7 +620,7 @@ class AdvancedHandlersMixin:
                ROUND(100.0 * SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) / COUNT(*), 1) AS violation_pct
         FROM chemistry_tidy
         WHERE is_detected = 1 AND pesticide_name NOT IN ('NO DETECTION', 'NO DATA')
-        GROUP BY {col} HAVING COUNT(*) >= 5 ORDER BY violation_pct DESC LIMIT 50
+        GROUP BY {col} HAVING COUNT(*) >= 5 ORDER BY violation_pct DESC, {col} LIMIT 50
         """
         df = con.execute(sql).df()
         con.close()
@@ -643,7 +643,7 @@ class AdvancedHandlersMixin:
         FROM chemistry_tidy
         WHERE is_detected = 1 AND pesticide_name NOT IN ('NO DETECTION', 'NO DATA')
         GROUP BY {col} HAVING SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) = 0
-        ORDER BY total_detections DESC LIMIT 100
+        ORDER BY total_detections DESC, {col} LIMIT 100
         """
         df = con.execute(sql).df()
         con.close()
@@ -654,15 +654,28 @@ class AdvancedHandlersMixin:
         response += df.to_markdown(index=False)
         return response, df
 
-    def _handle_top_n_by_metric(self, entity: str, metric: str, n: int = 5) -> Tuple[str, pd.DataFrame]:
-        """Top N products/facilities by violation count or rate. D007, D008, D014."""
-        col_map = {"product": '"اسم العينة"', "facility": '"اسم المنشاة"'}
+    # Groups with fewer samples than this are left out of rate rankings, so a
+    # 1-of-1 group does not top the list at 100%. Stated in every answer.
+    MIN_SAMPLES_FOR_RATE = 10
+
+    def _handle_top_n_by_metric(
+        self, entity: str, metric: str, n: Optional[int] = 5, min_samples: int = 5
+    ) -> Tuple[str, pd.DataFrame]:
+        """Products / facilities / municipalities / neighborhoods ranked by
+        violating-sample count or sample-level violation rate.
+        n=None lists every qualifying group. Groups with fewer than
+        `min_samples` samples are excluded. D007, D008, D010, D011, D014."""
+        col_map = {"product": '"اسم العينة"', "facility": '"اسم المنشاة"',
+                   "municipality": '"اسم البلدية"', "neighborhood": '"الحى"'}
+        label_map = {"product": "منتجات", "facility": "منشآت",
+                     "municipality": "بلديات", "neighborhood": "أحياء"}
         col = col_map.get(entity)
         if not col:
             return "⚠️ نوع غير معروف", pd.DataFrame()
         order_col = "violations" if metric == "count" else "violation_rate_pct"
+        limit_clause, params = ("LIMIT ?", [int(min_samples), int(n)]) if n else ("", [int(min_samples)])
         con = self._get_connection()
-        # col/order_col come from fixed maps above (never user text); n is bound.
+        # col/order_col come from fixed maps above (never user text); values are bound.
         sql = f"""
         SELECT {col} AS entity_name, COUNT(DISTINCT "كود العينة") AS total_samples,
                SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) AS violations,
@@ -670,16 +683,22 @@ class AdvancedHandlersMixin:
                ROUND(100.0 * COUNT(DISTINCT CASE WHEN is_above_limit = 1 THEN "كود العينة" END) /
                   NULLIF(COUNT(DISTINCT "كود العينة"), 0), 1) AS violation_rate_pct
         FROM chemistry_tidy
-        WHERE {col} IS NOT NULL
-        GROUP BY {col} HAVING COUNT(DISTINCT "كود العينة") >= 5
-        ORDER BY {order_col} DESC LIMIT ?
+        WHERE {col} IS NOT NULL AND {col} != ''
+        GROUP BY {col} HAVING COUNT(DISTINCT "كود العينة") >= ?
+        ORDER BY {order_col} DESC, {col} {limit_clause}
         """
-        df = con.execute(sql, [int(n)]).df()
+        df = con.execute(sql, params).df()
         con.close()
         if df.empty:
             return "⚠️ لم أجد بيانات كافية", df
-        response = f"📊 **أعلى {n} {'حسب نسبة المخالفة' if metric == 'rate' else 'حسب عدد المخالفات'}:**\n\n"
+        what = label_map[entity]
+        by = 'حسب نسبة المخالفة' if metric == 'rate' else 'حسب عدد المخالفات'
+        title = f"أعلى {n} {what} {by}" if n else f"نسبة المخالفة لكل البلديات" if entity == "municipality" \
+            else f"كل ال{what} {by}"
+        response = f"📊 **{title}:**\n\n"
         response += df.to_markdown(index=False)
+        response += (f"\n\n*نسبة المخالفة = العينات التي تجاوز فيها مبيد واحد على الأقل الحد ÷ عدد العينات. "
+                     f"استُبعدت المجموعات التي لديها أقل من {min_samples} عينات.*")
         return response, df
 
     def _handle_category_comparison(
@@ -787,7 +806,7 @@ class AdvancedHandlersMixin:
         FROM chemistry_tidy
         GROUP BY "اسم العينة"
         HAVING SUM(is_detected) = 0
-        ORDER BY sample_count DESC
+        ORDER BY sample_count DESC, sample_type
         """
         df = con.execute(sql).df()
         con.close()
@@ -844,12 +863,12 @@ class AdvancedHandlersMixin:
             top_products = con.execute(f"""
                 SELECT "اسم العينة" AS product, SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) AS violations
                 FROM chemistry_tidy WHERE 1=1 {date_clause}
-                GROUP BY "اسم العينة" ORDER BY violations DESC LIMIT 5
+                GROUP BY "اسم العينة" ORDER BY violations DESC, product LIMIT 5
             """).df()
             top_neighborhoods = con.execute(f"""
                 SELECT "الحى" AS neighborhood, SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) AS violations
                 FROM chemistry_tidy WHERE "الحى" IS NOT NULL {date_clause}
-                GROUP BY "الحى" ORDER BY violations DESC LIMIT 5
+                GROUP BY "الحى" ORDER BY violations DESC, neighborhood LIMIT 5
             """).df()
             response += "### أعلى ٥ منتجات من حيث المخالفات\n\n" + top_products.to_markdown(index=False) + "\n\n"
             response += "### أعلى ٥ أحياء من حيث المخالفات\n\n" + top_neighborhoods.to_markdown(index=False)
@@ -860,7 +879,7 @@ class AdvancedHandlersMixin:
                 FROM chemistry_tidy
                 WHERE is_detected = 1 AND pesticide_name NOT IN ('NO DETECTION', 'NO DATA')
                 {date_clause} {scope_clause}
-                GROUP BY pesticide_name ORDER BY violations DESC LIMIT 5
+                GROUP BY pesticide_name ORDER BY violations DESC, pesticide LIMIT 5
             """).df()
             if not top_pesticides.empty:
                 response += "### أعلى ٥ مبيدات من حيث المخالفات\n\n" + top_pesticides.to_markdown(index=False)
@@ -968,10 +987,13 @@ class AdvancedHandlersMixin:
             from pesticide_groups import get_consumption
 
         con = self._get_connection()
-        products = con.execute('SELECT DISTINCT "اسم العينة" FROM chemistry_tidy').df()["اسم العينة"].tolist()
+        products = con.execute(
+            'SELECT DISTINCT "اسم العينة" FROM chemistry_tidy WHERE "اسم العينة" IS NOT NULL ORDER BY 1'
+        ).df()["اسم العينة"].tolist()
         con.close()
 
-        ranked = sorted(products, key=lambda p: get_consumption(p) or 0, reverse=True)[:n]
+        # Tie-break equal consumption by name so the top N is the same every run.
+        ranked = sorted(products, key=lambda p: (-(get_consumption(p) or 0), p))[:n]
         text, df = self._handle_health_risk_index(ranked)
         header = f"📊 **أعلى {n} منتجات استهلاكاً:** {', '.join(ranked)}\n\n"
         return header + text, df
@@ -1199,19 +1221,22 @@ class AdvancedHandlersMixin:
         if not pesticides_a or not pesticides_b:
             return f"⚠️ لم أجد مبيدات كافية في إحدى المجموعتين ({group_a_ar} / {group_b_ar})", pd.DataFrame()
 
-        filt_a = ", ".join(f"'{p}'" for p in pesticides_a)
-        filt_b = ", ".join(f"'{p}'" for p in pesticides_b)
+        filt_a, params_a = self._in_clause("pesticide_name", list(pesticides_a))
+        filt_b, params_b = self._in_clause("pesticide_name", list(pesticides_b))
         con = self._get_connection()
         sql = f"""
-        SELECT "كود العينة" AS sample_code, "اسم العينة" AS sample_name
-        FROM chemistry_tidy
-        WHERE is_detected = 1 AND pesticide_name IN ({filt_a})
-        INTERSECT
-        SELECT "كود العينة", "اسم العينة"
-        FROM chemistry_tidy
-        WHERE is_detected = 1 AND pesticide_name IN ({filt_b})
+        SELECT sample_code, sample_name FROM (
+            SELECT "كود العينة" AS sample_code, "اسم العينة" AS sample_name
+            FROM chemistry_tidy
+            WHERE is_detected = 1 AND {filt_a}
+            INTERSECT
+            SELECT "كود العينة", "اسم العينة"
+            FROM chemistry_tidy
+            WHERE is_detected = 1 AND {filt_b}
+        )
+        ORDER BY sample_code, sample_name
         """
-        df = con.execute(sql).df()
+        df = con.execute(sql, params_a + params_b).df()
         con.close()
         if df.empty:
             return f"⚠️ لم أجد عينات تحتوي على {group_a_ar} و{group_b_ar} معاً", df
@@ -1327,7 +1352,7 @@ class AdvancedHandlersMixin:
         WHERE is_above_limit = 1 AND "اسم المنشاة" IS NOT NULL
         GROUP BY "اسم المنشاة"
         HAVING COUNT(*) > {threshold}
-        ORDER BY violations DESC
+        ORDER BY violations DESC, "اسم المنشاة"
         """
         df = con.execute(sql).df()
         con.close()
@@ -1442,7 +1467,7 @@ class AdvancedHandlersMixin:
                ROUND(AVG(exceedance_ratio * 100), 1) AS avg_pct_mrl
         FROM chemistry_tidy
         WHERE is_detected = 1 AND limit_value > 0
-        GROUP BY "اسم العينة" ORDER BY avg_pct_mrl DESC
+        GROUP BY "اسم العينة" ORDER BY avg_pct_mrl DESC, "اسم العينة"
         """
         df = con.execute(sql).df()
         con.close()
@@ -1456,16 +1481,20 @@ class AdvancedHandlersMixin:
     # ──────────────────────────────────────────────────────────────────────
     def _handle_quality_index_by_product(self) -> Tuple[str, pd.DataFrame]:
         con = self._get_connection()
+        # DECIMAL, not DOUBLE: DuckDB sums doubles in parallel in no fixed order,
+        # so the average's last bit (and a value on a rounding boundary, e.g.
+        # Hazelnuts 0.9075) changed between runs. Decimal sums are exact.
         sql = """
         WITH qi_calc AS (
             SELECT "كود العينة", "اسم العينة" AS sample_name,
-                   SUM(CASE WHEN limit_value > 0 THEN concentration / limit_value ELSE 0 END) AS quality_index
+                   SUM(CASE WHEN limit_value > 0
+                            THEN CAST(concentration / limit_value AS DECIMAL(18, 9)) ELSE 0 END) AS quality_index
             FROM chemistry_tidy
             WHERE is_detected = 1 AND pesticide_name NOT IN ('NO DETECTION', 'NO DATA')
             GROUP BY "كود العينة", "اسم العينة"
         )
         SELECT sample_name AS sample_type, ROUND(AVG(quality_index), 3) AS avg_quality_index
-        FROM qi_calc GROUP BY sample_name ORDER BY avg_quality_index DESC
+        FROM qi_calc GROUP BY sample_name ORDER BY avg_quality_index DESC, sample_name
         """
         df = con.execute(sql).df()
         con.close()
@@ -1699,7 +1728,7 @@ class AdvancedHandlersMixin:
               AND {sample_filter}
               {test_filter}
             GROUP BY "نوع الاختبار", pesticide_name
-            ORDER BY فوق_الحد DESC, تحت_الحد DESC
+            ORDER BY فوق_الحد DESC, تحت_الحد DESC, "نوع الاختبار", pesticide_name
             """
             df = con.execute(sql, params).df()
             con.close()

@@ -114,7 +114,7 @@ class EntityDetectionMixin:
                 # Return a special sentinel so process() knows it's a category
                 detected = [f"__cat__{matched_cat}"]
 
-        return list(set(detected))
+        return sorted(set(detected))
 
     def _detect_neighborhoods(self, query: str) -> List[str]:
         """
@@ -141,7 +141,9 @@ class EntityDetectionMixin:
                 if key in query_lower:
                     detected.append(db_val)
 
-        return list(set(detected))
+        # Sorted, not list(set(...)): set order changes with PYTHONHASHSEED and
+        # this list is shown in answers and used to build filters.
+        return sorted(set(detected))
 
     def _detect_pesticide(self, query: str) -> Optional[str]:
         """

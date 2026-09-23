@@ -28,8 +28,6 @@ sample_category,ورقيات,Leafy Greens
 sample_category,الورقيات,Leafy Greens
 sample_category,خضار ورقية,Leafy Greens
 sample_category,leafy,Leafy Greens
-sample_category,تمور,Dates
-sample_category,التمور,Dates
 product_head,فلفل,pepper
 product_head,pepper,pepper
 product_head,peppers,pepper
@@ -91,7 +89,27 @@ product_alias,ليمون اسود,Dried Lemon
 product_alias,dried lime,Dried Lemon
 product_alias,دقيق بر,Brown Wheat Flour
 product_alias,دقيق بر,Brown Flour
-processed_form,tahini,tahini
 product_alias,طحينة اللوز,Almond Tahini
 product_alias,طحينة لوز,Almond Tahini
 product_alias,almond tahini,Almond Tahini
+product_head,تمر,date
+product_head,تمور,date
+product_head,dates,date
+product_head,date,date
+processed_form,tahini,*
+processed_form,molasse,date
+processed_form,paste,date
+processed_form,powder,date
+product_alias,دبس,Date Molasses
+product_alias,دبس التمر,Date Molasses
+product_alias,دبس تمر,Date Molasses
+product_alias,عجينة التمر,Date Paste
+product_alias,عجينة تمر,Date Paste
+product_alias,معجون التمر,Date Paste
+product_alias,مسحوق التمر,Date Powder
+product_alias,مسحوق تمر,Date Powder
+product_alias,بودرة التمر,Date Powder
+product_alias,بودرة تمر,Date Powder
+product_alias,date molasses,Date Molasses
+product_alias,date paste,Date Paste
+product_alias,date powder,Date Powder

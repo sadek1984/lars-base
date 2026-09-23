@@ -15,6 +15,36 @@ import pandas as pd
 
 
 class KeywordPatternsMixin:
+    _ARABIC_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
+
+    def _dispatch_rate_breakdown(self, ctx: dict) -> Optional[Tuple[str, Optional[pd.DataFrame]]]:
+        """Rate / performance questions broken down by municipality, neighborhood
+        or month ("أداء كل بلدية", "أخطر ٥ أحياء من حيث نسبة المخالفة",
+        "اتجاه نسبة المطابقة على مدى الأشهر"). Runs before the Tier-0
+        compliance override, which otherwise catches 'المطابقة' and returns the
+        generic all-products table. Returns None when the question names a
+        specific municipality/neighborhood (comparisons are handled elsewhere)."""
+        query = ctx['query']
+        resolution = ctx.get('resolution')
+        rate_words = ('نسبة المخالفة', 'نسبة مخالفة', 'نسبة المطابقة', 'نسبة الرسوب', 'أداء', 'أخطر')
+        if not any(w in query for w in rate_words):
+            return None
+        if ctx['detected_samples'] or ctx['detected_neighborhoods'] or (
+                resolution is not None and (resolution.municipalities or resolution.categories)):
+            return None
+        n_match = re.search(r'(\d+)', query.translate(self._ARABIC_DIGITS))
+        n = int(n_match.group(1)) if n_match else None
+
+        if any(w in query for w in ('كل بلدية', 'لكل بلدية', 'البلديات')):
+            return self._handle_top_n_by_metric('municipality', 'rate', n,
+                                                min_samples=self.MIN_SAMPLES_FOR_RATE)
+        if any(w in query for w in ('الأحياء', 'أحياء', 'كل حي', 'لكل حي')):
+            return self._handle_top_n_by_metric('neighborhood', 'rate', n,
+                                                min_samples=self.MIN_SAMPLES_FOR_RATE)
+        if any(w in query for w in ('الأشهر', 'كل شهر', 'شهرياً', 'على مدى', 'اتجاه')) and 'أي شهر' not in query:
+            return self._handle_time_series_breakdown('month')
+        return None
+
     def _dispatch_keyword_patterns(
         self, ctx: dict
     ) -> Optional[Tuple[str, Optional[pd.DataFrame]]]:
@@ -431,7 +461,9 @@ class KeywordPatternsMixin:
                 stats_keywords_found.append(stat_type)
         
         if stats_keywords_found and detected_pesticide:
-            return self._handle_pesticide_stats(detected_pesticide, detected_samples, stats_keywords_found, date_filter=detected_period)
+            return self._handle_pesticide_stats(detected_pesticide, detected_samples, stats_keywords_found,
+                                                date_filter=detected_period,
+                                                category=None if detected_samples else _detected_category_key)
 
         # Pattern HRI: Health Risk Index
         hri_kws_en = [
