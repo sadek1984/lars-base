@@ -66,7 +66,17 @@ class EntityDetectionMixin:
         Detect sample types from query.
         DB stores ENGLISH names in "اسم العينة" (e.g. 'Tomato', 'Pistachios').
         Returns English DB values directly.
+
+        With an EntityResolver (the normal case) these are exact DB values, or a
+        single '__cat__<DB category>' sentinel when only a category was named.
+        The dictionary scan below is the fallback when the DB is unavailable.
         """
+        res = self._resolve(query)
+        if res is not None:
+            if res.products:
+                return list(res.products)
+            return [f"__cat__{res.categories[0]}"] if res.categories else []
+
         detected = []
         query_lower = query.lower()
         remaining_lower = query_lower  # track consumed text to avoid sub-matches
@@ -111,6 +121,11 @@ class EntityDetectionMixin:
         Detect neighborhood names. DB stores Arabic values (الإسكان, الريان etc.)
         Supports English transliterations and Arabic matching.
         """
+        res = self._resolve(query)
+        if res is not None:
+            # Product qualifiers ('الفلفل الأخضر') are consumed by the resolver and
+            # must not be read as the neighborhood of the same name.
+            query = self._get_resolver().mask_consumed(query, res)
         detected = []
         query_lower = query.lower()
 
@@ -172,9 +187,12 @@ class EntityDetectionMixin:
         # that exact and space-insensitive matching above miss (see
         # fuzzy_match_pesticide_ar's docstring for why this is necessary
         # rather than another dictionary entry).
-        from modules.query.mappings import fuzzy_match_pesticide_ar
-        _nospace_for_fuzzy = norm_query.replace(" ", "")
-        fuzzy_result = fuzzy_match_pesticide_ar(_nospace_for_fuzzy)
+        # Generic words ("المبيدات", "السموم الفطرية") are removed first: on their
+        # own they fuzzy-score >= 82 against 'اللامبدا' and used to inject
+        # lambda-cyhalothrin into questions that name no pesticide at all.
+        from modules.query.mappings import fuzzy_match_pesticide_ar, strip_generic_pesticide_words
+        _nospace_for_fuzzy = strip_generic_pesticide_words(norm_query).replace(" ", "")
+        fuzzy_result = fuzzy_match_pesticide_ar(_nospace_for_fuzzy) if _nospace_for_fuzzy else None
         if fuzzy_result:
             return fuzzy_result
         # 1b. Arabic — space-insensitive fallback for compound transliterated
@@ -247,4 +265,5 @@ class EntityDetectionMixin:
             'detected_period': detected_period,
             'detected_period_label': detected_period_label,
             'category_key': category_key,
+            'resolution': self._resolve(query),
         }

@@ -170,8 +170,13 @@ class IntentRouter:
         dialect_synonyms: Optional dict of dialect normalization rules.
     """
 
-    def __init__(self, dialect_synonyms: Optional[Dict[str, str]] = None) -> None:
+    def __init__(self, dialect_synonyms: Optional[Dict[str, str]] = None,
+                 resolver_provider=None) -> None:
         self.dialect_synonyms = dialect_synonyms or {}
+        # Callable returning the engine's EntityResolver (or None when the DB is
+        # unavailable). When present, samples/category/neighborhoods resolve to
+        # exact DB values; the dictionary extractors below are the fallback.
+        self._resolver_provider = resolver_provider
 
         # ── Keyword groups ──
         self._above_keywords = frozenset([
@@ -247,10 +252,17 @@ class IntentRouter:
             normalized_query=normalized,
         )
 
-        entities.samples = self._extract_samples(normalized)
-        entities.neighborhoods = self._extract_neighborhoods(normalized)
+        resolver = self._resolver_provider() if self._resolver_provider else None
+        if resolver is not None:
+            res = resolver.resolve(normalized)
+            entities.samples = list(res.products)
+            entities.neighborhoods = self._extract_neighborhoods(resolver.mask_consumed(normalized, res))
+            entities.category = res.categories[0] if res.categories else None
+        else:
+            entities.samples = self._extract_samples(normalized)
+            entities.neighborhoods = self._extract_neighborhoods(normalized)
+            entities.category = self._extract_category(normalized)
         entities.pesticide = self._extract_pesticide(normalized)
-        entities.category = self._extract_category(normalized)
 
         # ── Extract modifiers ──
         entities.wants_types = self._has_any(normalized, self._type_keywords)

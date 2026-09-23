@@ -38,7 +38,7 @@ class AdvancedHandlersMixin:
     # detected pesticides regardless of group. This fix makes the query answer
     # SOMETHING (better than a hard fail) but the answer will be broader than asked.
     def _handle_health_risk_index(
-        self, samples: List[str]
+        self, samples: List[str], pesticide_group: Optional[str] = None
     ) -> Tuple[str, pd.DataFrame]:
         """
         Calculate Health Risk Index for detected pesticides in given samples.
@@ -52,8 +52,17 @@ class AdvancedHandlersMixin:
 
         con = self._get_connection()
 
-        sample_conditions = [f"\"اسم العينة\" LIKE '%{s}%'" for s in samples]
-        sample_filter = f"({' OR '.join(sample_conditions)})" if sample_conditions else "1=1"
+        sample_filter, params = self._in_clause("اسم العينة", samples) if samples else ("1=1", [])
+        group_filter = ""
+        if pesticide_group:
+            resolver = self._get_resolver()
+            group_names = resolver.pesticides_in_group(pesticide_group) if resolver else []
+            if not group_names:
+                con.close()
+                return f"⚠️ لا توجد مبيدات من مجموعة {pesticide_group} في البيانات", pd.DataFrame()
+            group_sql, group_params = self._in_clause("pesticide_name", group_names)
+            group_filter = f"AND {group_sql}"
+            params = params + group_params
 
         sql = f"""
         SELECT
@@ -67,10 +76,11 @@ class AdvancedHandlersMixin:
         WHERE is_detected = 1
           AND pesticide_name NOT IN ('NO DETECTION', 'NO DATA')
           AND {sample_filter}
+          {group_filter}
         GROUP BY "اسم العينة", pesticide_name
         ORDER BY mean_conc DESC
         """
-        df = con.execute(sql).df()
+        df = con.execute(sql, params).df()
         con.close()
 
         if df.empty:
@@ -111,7 +121,8 @@ class AdvancedHandlersMixin:
         risky = result_df[result_df["مستوى الخطر"] == "🔴 مرتفع"]
         moderate = result_df[result_df["مستوى الخطر"] == "🟡 متوسط"]
 
-        response = f"⚕️ **مؤشر الخطر الصحي (HRI) لعينات {sample_display}:**\n\n"
+        group_display = f" — مجموعة {pesticide_group}" if pesticide_group else ""
+        response = f"⚕️ **مؤشر الخطر الصحي (HRI) لعينات {sample_display}{group_display}:**\n\n"
         response += f"📐 **المعادلة:** HRI = (تركيز × استهلاك يومي) ÷ (ADI × وزن الجسم 60كجم)\n"
         response += f"✅ HRI < 0.1 = منخفض | ⚠️ HRI 0.1–1 = متوسط | 🔴 HRI > 1 = مرتفع\n\n"
         response += f"🔴 مبيدات ذات خطر مرتفع: **{len(risky)}**\n"
@@ -138,8 +149,7 @@ class AdvancedHandlersMixin:
         """
         con = self._get_connection()
 
-        sample_conditions = [f"\"اسم العينة\" LIKE '%{s}%'" for s in samples]
-        sample_filter = f"({' OR '.join(sample_conditions)})"
+        sample_filter, params = self._in_clause("اسم العينة", samples)
 
         sql = f"""
         WITH qi_calc AS (
@@ -174,9 +184,8 @@ class AdvancedHandlersMixin:
             END                 AS تقييم_الجودة
         FROM qi_calc
         ORDER BY quality_index DESC
-        LIMIT 100
         """
-        df = con.execute(sql).df()
+        df = con.execute(sql, params).df()
         con.close()
 
         sample_display = " + ".join(samples)
@@ -189,7 +198,7 @@ class AdvancedHandlersMixin:
         good = (df["تقييم_الجودة"] == "🟢 جيد").sum()
         avg_qi = df["مؤشر_الجودة"].mean().round(3)
 
-        response = f"📊 **مؤشر الجودة (QI) لعينات {sample_display}:**\n\n"
+        response = f"📊 **مؤشر الجودة (QI) لعينات {sample_display}:** ({len(df)} عينة)\n\n"
         response += f"📐 **المعادلة:** QI = Σ(تركيز المبيد ÷ حد MRL)\n"
         response += f"✅ QI < 1 = جيد | ⚠️ QI 1–3 = مقبول | 🔴 QI > 3 = ضعيف\n\n"
         response += f"📈 متوسط مؤشر الجودة: **{avg_qi}**\n"
@@ -309,6 +318,24 @@ class AdvancedHandlersMixin:
     # ──────────────────────────────────────────────────────────────────────────
     # Category + Pesticide (e.g. "vegetables associated with bifenthrin")
     # ──────────────────────────────────────────────────────────────────────────
+    def _category_or_samples_filter(
+        self, category_key: Optional[str], samples: List[str]
+    ) -> Tuple[Optional[str], List[str], str]:
+        """(sql, params, label) filtering by exact products, else by DB category.
+        category_key may be a legacy key ('spice'), a DB value ('Spices') or an
+        Arabic word; it is resolved to the stored "نوع العينة" value. sql is None
+        when a category was given but does not exist in the data."""
+        if samples:
+            sql, params = self._in_clause("اسم العينة", samples)
+            return sql, params, " + ".join(samples)
+        if not category_key:
+            return "1=1", [], "جميع العينات"
+        resolver = self._get_resolver()
+        db_category = resolver.category_db_value(category_key) if resolver else None
+        if not db_category:
+            return None, [], category_key
+        return '"نوع العينة" = ?', [db_category], resolver.label_for_category(db_category)
+
     def _handle_category_pesticide(
         self, pesticide: str, category_key: Optional[str], samples: List[str]
     ) -> Tuple[str, pd.DataFrame]:
@@ -320,22 +347,14 @@ class AdvancedHandlersMixin:
         except ImportError:
             get_pesticide_variants = lambda p: [p]
 
+        sample_filter, params, category_label = self._category_or_samples_filter(category_key, samples)
+        if sample_filter is None:
+            return f"⚠️ فئة غير معروفة في البيانات: {category_key}", pd.DataFrame()
         con = self._get_connection()
 
-        # Build sample filter from category or explicit samples
-        # CATEGORY_AR imported from modules.query.mappings — single source of truth
-
-        if samples:
-            conditions = [f"\"اسم العينة\" LIKE '%{s}%'" for s in samples]
-        elif category_key and category_key in CATEGORY_AR:
-            conditions = [f"\"اسم العينة\" LIKE '%{ar}%'" for ar in CATEGORY_AR[category_key]]
-        else:
-            conditions = ["1=1"]
-
-        sample_filter = f"({' OR '.join(conditions)})"
-
         pesticide_variants = get_pesticide_variants(pesticide)
-        pest_filter = ", ".join([f"'{v}'" for v in pesticide_variants])
+        pest_filter = ", ".join("?" for _ in pesticide_variants)
+        params = list(pesticide_variants) + params
 
         sql = f"""
         SELECT
@@ -354,13 +373,8 @@ class AdvancedHandlersMixin:
         ORDER BY التكرار DESC
         """
 
-        df = con.execute(sql).df()
+        df = con.execute(sql, params).df()
         con.close()
-
-        category_label = {
-            "vegetable": "الخضار", "fruit": "الفواكه", "spice": "التوابل",
-            "nut": "المكسرات", "grain": "الحبوب", "leafy": "الورقيات"
-        }.get(category_key or "", " + ".join(samples) if samples else "جميع العينات")
 
         if df.empty:
             return f"⚠️ لم أجد {pesticide} في {category_label}", df
@@ -379,9 +393,9 @@ class AdvancedHandlersMixin:
     # Municipality pesticides (A053)
     # ──────────────────────────────────────────────────────────────────────────
     def _handle_municipality_pesticides(self, municipality: str) -> Tuple[str, pd.DataFrame]:
-        """Pesticides detected within a given municipality. Covers A053."""
+        """Pesticides detected within a given municipality (exact DB value). Covers A053."""
         con = self._get_connection()
-        sql = f"""
+        sql = """
         SELECT
             pesticide_name AS pesticide,
             COUNT(*) AS detections,
@@ -389,23 +403,49 @@ class AdvancedHandlersMixin:
         FROM chemistry_tidy
         WHERE is_detected = 1
           AND pesticide_name NOT IN ('NO DETECTION', 'NO DATA')
-          AND "اسم البلدية" LIKE '%{municipality}%'
+          AND "اسم البلدية" = ?
         GROUP BY pesticide_name
         ORDER BY detections DESC
         LIMIT 50
         """
-        df = con.execute(sql).df()
+        df = con.execute(sql, [municipality]).df()
         con.close()
         if df.empty:
             return f"⚠️ لم أجد بيانات لبلدية {municipality}", df
-        response = f"🏛️ **المبيدات في بلدية {municipality}:**\n\n"
+        response = f"🏛️ **المبيدات في {municipality}:**\n\n"
         response += df.to_markdown(index=False)
         return response, df
 
-    def _handle_municipality_comparison(self, mun_a: str, mun_b: str) -> Tuple[str, pd.DataFrame]:
-        """Compare violation rate between two municipalities. Covers A054, D012."""
+    def _handle_municipality_comparison(
+        self, mun_a: str, mun_b: str, metric: str = "violation_rate"
+    ) -> Tuple[str, pd.DataFrame]:
+        """Compare two municipalities (exact DB values). metric='violation_rate'
+        (D012) or 'pesticides' — detected pesticides side by side (A054)."""
         con = self._get_connection()
-        sql = f"""
+        if metric == "pesticides":
+            sql = """
+            SELECT
+                "اسم البلدية" AS municipality,
+                pesticide_name AS pesticide,
+                COUNT(*) AS detections,
+                SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) AS violations
+            FROM chemistry_tidy
+            WHERE is_detected = 1
+              AND pesticide_name NOT IN ('NO DETECTION', 'NO DATA')
+              AND "اسم البلدية" IN (?, ?)
+            GROUP BY "اسم البلدية", pesticide_name
+            ORDER BY "اسم البلدية", detections DESC
+            """
+            df = con.execute(sql, [mun_a, mun_b]).df()
+            con.close()
+            if df.empty:
+                return f"⚠️ لم أجد مبيدات مكتشفة في {mun_a} أو {mun_b}", df
+            counts = df.groupby("municipality")["pesticide"].nunique().to_dict()
+            response = f"📊 **المبيدات المكتشفة: {mun_a} مقابل {mun_b}:**\n\n"
+            response += " | ".join(f"{m}: **{n}** مبيد" for m, n in counts.items()) + "\n\n"
+            response += df.to_markdown(index=False)
+            return response, df
+        sql = """
         SELECT
             "اسم البلدية" AS municipality,
             COUNT(DISTINCT "كود العينة") AS total_samples,
@@ -413,10 +453,10 @@ class AdvancedHandlersMixin:
             ROUND(100.0 * SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) /
                   NULLIF(COUNT(DISTINCT "كود العينة"), 0), 1) AS violation_rate_pct
         FROM chemistry_tidy
-        WHERE "اسم البلدية" IN ('{mun_a}', '{mun_b}')
+        WHERE "اسم البلدية" IN (?, ?)
         GROUP BY "اسم البلدية"
         """
-        df = con.execute(sql).df()
+        df = con.execute(sql, [mun_a, mun_b]).df()
         con.close()
         if df.empty:
             return f"⚠️ لم أجد بيانات للمقارنة بين {mun_a} و{mun_b}", df
@@ -424,23 +464,42 @@ class AdvancedHandlersMixin:
         response += df.to_markdown(index=False)
         return response, df
 
-    def _handle_municipality_breakdown(self, municipality: str) -> Tuple[str, pd.DataFrame]:
-        """Sample counts per product type within a municipality. Covers A055."""
+    def _handle_municipality_breakdown(self, municipality: Optional[str]) -> Tuple[str, pd.DataFrame]:
+        """Sample counts per product type within a municipality (exact DB value),
+        or for every municipality when municipality is None. Covers A055."""
         con = self._get_connection()
-        sql = f"""
+        if municipality is None:
+            sql = """
+            SELECT
+                COALESCE("اسم البلدية", 'غير مسجّلة') AS municipality,
+                "اسم العينة" AS sample_type,
+                COUNT(DISTINCT "كود العينة") AS sample_count
+            FROM chemistry_tidy
+            GROUP BY "اسم البلدية", "اسم العينة"
+            ORDER BY municipality, sample_count DESC
+            """
+            df = con.execute(sql).df()
+            con.close()
+            if df.empty:
+                return "⚠️ لم أجد بيانات للبلديات", df
+            response = (f"📊 **توزيع العينات حسب البلدية ونوع المنتج:** "
+                        f"{df['municipality'].nunique()} بلدية\n\n")
+            response += df.to_markdown(index=False)
+            return response, df
+        sql = """
         SELECT
             "اسم العينة" AS sample_type,
             COUNT(DISTINCT "كود العينة") AS sample_count
         FROM chemistry_tidy
-        WHERE "اسم البلدية" LIKE '%{municipality}%'
+        WHERE "اسم البلدية" = ?
         GROUP BY "اسم العينة"
         ORDER BY sample_count DESC
         """
-        df = con.execute(sql).df()
+        df = con.execute(sql, [municipality]).df()
         con.close()
         if df.empty:
-            return f"⚠️ لم أجد بيانات لبلدية {municipality}", df
-        response = f"📊 **توزيع العينات حسب النوع — بلدية {municipality}:**\n\n"
+            return f"⚠️ لم أجد بيانات لـ {municipality}", df
+        response = f"📊 **توزيع العينات حسب النوع — {municipality}:**\n\n"
         response += df.to_markdown(index=False)
         return response, df
 
@@ -455,7 +514,8 @@ class AdvancedHandlersMixin:
         SELECT
             COUNT(*) AS total,
             SUM(CASE WHEN {col} IS NULL OR {col} = '' THEN 1 ELSE 0 END) AS missing,
-            ROUND(100.0 * SUM(CASE WHEN {col} IS NULL OR {col} = '' THEN 1 ELSE 0 END) / COUNT(*), 1) AS missing_pct
+            ROUND(100.0 * SUM(CASE WHEN {col} IS NULL OR {col} = '' THEN 1 ELSE 0 END) / COUNT(*), 1) AS missing_pct,
+            COUNT(DISTINCT CASE WHEN {col} IS NULL OR {col} = '' THEN "كود العينة" END) AS missing_samples
         FROM chemistry_tidy
         """
         df = con.execute(sql).df()
@@ -465,7 +525,8 @@ class AdvancedHandlersMixin:
         response = (
             f"📊 **نسبة السجلات الناقصة في حقل {label}:**\n\n"
             f"إجمالي السجلات: **{int(row['total'])}**\n"
-            f"سجلات ناقصة: **{int(row['missing'])}** ({row['missing_pct']}%)"
+            f"سجلات ناقصة: **{int(row['missing'])}** ({row['missing_pct']}%)\n"
+            f"عينات فريدة بدون {label}: **{int(row['missing_samples'])}**"
         )
         return response, df
 
@@ -1178,24 +1239,24 @@ class AdvancedHandlersMixin:
     # A040 — pesticides that NEVER appeared in a given category
     # ──────────────────────────────────────────────────────────────────────
     def _handle_never_detected_in_category(self, category_key: str) -> Tuple[str, pd.DataFrame]:
+        """Tested pesticides never detected in a category. Spelling variants are
+        merged to canonical names (PESTICIDE_VARIANTS) so a typo'd DB spelling
+        does not show up as a separate 'never detected' pesticide."""
+        from modules.query.entity_resolver import canonical_pesticide
+        sample_filter, params, label = self._category_or_samples_filter(category_key, [])
+        if sample_filter is None:
+            return f"⚠️ فئة غير معروفة في البيانات: {category_key}", pd.DataFrame()
         con = self._get_connection()
-        conditions = [f"\"اسم العينة\" LIKE '%{ar}%'" for ar in CATEGORY_AR.get(category_key, [])]
-        if not conditions:
-            return f"⚠️ فئة غير معروفة: {category_key}", pd.DataFrame()
-        sample_filter = f"({' OR '.join(conditions)})"
-
-        all_pesticides = set(con.execute(
+        all_pesticides = {canonical_pesticide(p) for p in con.execute(
             "SELECT DISTINCT pesticide_name FROM chemistry_tidy WHERE pesticide_name NOT IN ('NO DETECTION','NO DATA')"
-        ).df()["pesticide_name"])
-        detected_in_cat = set(con.execute(f"""
+        ).df()["pesticide_name"]}
+        detected_in_cat = {canonical_pesticide(p) for p in con.execute(f"""
             SELECT DISTINCT pesticide_name FROM chemistry_tidy
             WHERE is_detected = 1 AND {sample_filter}
-        """).df()["pesticide_name"])
+        """, params).df()["pesticide_name"]}
         con.close()
 
         never = sorted(all_pesticides - detected_in_cat)
-        label = {"vegetable": "الخضار", "fruit": "الفواكه", "spice": "التوابل",
-                  "nut": "المكسرات", "grain": "الحبوب", "leafy": "الورقيات"}.get(category_key, category_key)
         if not never:
             return f"⚠️ كل المبيدات المسجّلة ظهرت في {label} على الأقل مرة واحدة", pd.DataFrame()
         df = pd.DataFrame({"pesticide": never})
@@ -1590,24 +1651,19 @@ class AdvancedHandlersMixin:
     # Category limit summary (spices above AND below limits)
     # ──────────────────────────────────────────────────────────────────────────
     def _handle_category_limit_summary(
-        self, category_key: Optional[str], samples: List[str], test_type: Optional[str] = None
+        self, category_key: Optional[str], samples: List[str], test_type: Optional[str] = None,
+        by_pesticide: bool = False,
     ) -> Tuple[str, pd.DataFrame]:
         """
         Show all sample types in a category with their above/below limit counts.
         "spices above and below permissible limits"
+        by_pesticide=True lists each detected pesticide/mycotoxin instead
+        ("المبيدات والسموم الفطرية فوق الحد وتحت الحد للتوابل").
         """
+        sample_filter, params, category_label = self._category_or_samples_filter(category_key, samples)
+        if sample_filter is None:
+            return f"⚠️ فئة غير معروفة في البيانات: {category_key}", pd.DataFrame()
         con = self._get_connection()
-
-        # CATEGORY_AR imported from modules.query.mappings — single source of truth
-
-        if samples:
-            conditions = [f"\"اسم العينة\" LIKE '%{s}%'" for s in samples]
-        elif category_key and category_key in CATEGORY_AR:
-            conditions = [f"\"اسم العينة\" LIKE '%{ar}%'" for ar in CATEGORY_AR[category_key]]
-        else:
-            conditions = ["1=1"]
-
-        sample_filter = f"({' OR '.join(conditions)})"
 
         # Optional test type filter
         test_filter = ""
@@ -1615,6 +1671,31 @@ class AdvancedHandlersMixin:
             test_filter = "AND \"نوع الاختبار\" LIKE '%مبيد%'"
         elif test_type == "mycotoxin":
             test_filter = "AND \"نوع الاختبار\" LIKE '%فطري%'"
+
+        if by_pesticide:
+            sql = f"""
+            SELECT
+                "نوع الاختبار" AS نوع_الاختبار,
+                pesticide_name AS المبيد,
+                SUM(CASE WHEN is_above_limit = 1 THEN 1 ELSE 0 END) AS فوق_الحد,
+                SUM(CASE WHEN is_above_limit = 1 THEN 0 ELSE 1 END) AS تحت_الحد
+            FROM chemistry_tidy
+            WHERE is_detected = 1
+              AND pesticide_name NOT IN ('NO DETECTION', 'NO DATA')
+              AND {sample_filter}
+              {test_filter}
+            GROUP BY "نوع الاختبار", pesticide_name
+            ORDER BY فوق_الحد DESC, تحت_الحد DESC
+            """
+            df = con.execute(sql, params).df()
+            con.close()
+            if df.empty:
+                return f"⚠️ لم أجد مبيدات مكتشفة في {category_label}", df
+            response = f"📊 **المبيدات والسموم الفطرية في {category_label} — فوق وتحت الحد:**\n\n"
+            response += (f"✅ {len(df)} مبيد/سم | 🔴 اكتشافات فوق الحد: **{int(df['فوق_الحد'].sum())}**"
+                         f" | 🟢 تحت الحد: **{int(df['تحت_الحد'].sum())}**\n\n")
+            response += df.to_markdown(index=False)
+            return response, df
 
         sql = f"""
         WITH sample_status AS (
@@ -1641,13 +1722,8 @@ class AdvancedHandlersMixin:
         ORDER BY نوع_العينة, test_type
         """
 
-        df = con.execute(sql).df()
+        df = con.execute(sql, params).df()
         con.close()
-
-        category_label = {
-            "vegetable": "الخضار", "fruit": "الفواكه", "spice": "التوابل",
-            "nut": "المكسرات", "grain": "الحبوب", "leafy": "الورقيات"
-        }.get(category_key or "", " + ".join(samples) if samples else "جميع العينات")
 
         if df.empty:
             return f"⚠️ لم أجد بيانات لـ {category_label}", df

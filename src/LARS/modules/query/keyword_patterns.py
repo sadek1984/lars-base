@@ -34,6 +34,7 @@ class KeywordPatternsMixin:
         detected_pesticide    = ctx['detected_pesticide']
         detected_period       = ctx['detected_period']
         _detected_category_key = ctx['category_key']
+        resolution = ctx.get('resolution')
 
         # Pattern 0: Comprehensive neighborhood + sample type analysis
         # "what are the types of spices in al_iskan and how many above/below limit"
@@ -315,30 +316,32 @@ class KeywordPatternsMixin:
         if detected_neighborhoods and ('pesticide' in query_lower or 'pesticides' in query_lower):
             show_separately = any(phrase in query_lower for phrase in ['individually', 'separately', 'for each'])
             return self._handle_neighborhood_pesticides(detected_neighborhoods, show_separately, date_filter=detected_period)
-        # Pattern MUNICIPALITY: pesticides/breakdown/comparison by بلدية
-        municipality_match = re.search(
-            r'بلدية\s+((?:(?!\S*بلدية)[^\s؟?]+)(?:\s+(?:(?!\S*بلدية)[^\s؟?]+)){0,2})', query
-        )
-        if municipality_match and 'قارن' not in query and 'مقابل' not in query:
-            mun_name = municipality_match.group(1).strip()
-            if 'أنواع' in query or 'مفصلة' in query or 'حسب نوع' in query:
-                return self._handle_municipality_breakdown(mun_name)
-            return self._handle_municipality_pesticides(mun_name)
-
-        # Pattern MUNICIPALITY_COMPARE: "قارن بلدية X وبلدية Y"
-        if ('قارن' in query or 'مقابل' in query) and 'بلدية' in query:
-            mun_matches = re.findall(
-                r'بلدية\s+((?:(?!\S*بلدية)[^\s؟?]+)(?:\s+(?:(?!\S*بلدية)[^\s؟?]+)){0,2})', query
-            )
-            if len(mun_matches) >= 2:
-                return self._handle_municipality_comparison(mun_matches[0].strip(), mun_matches[1].strip())
-
-        # Pattern MISSING_FIELD: "نسبة السجلات الناقصة في حقل X"
+        # Pattern MISSING_FIELD: "نسبة السجلات الناقصة في حقل X" / "كم عينة ليس لها بلدية"
+        # Checked before MUNICIPALITY so 'بلدية مسجّلة' is not read as a municipality name.
         if 'ناقصة' in query or 'ناقص' in query or 'ليس لها' in query:
             if 'حي' in query or 'الحى' in query:
                 return self._handle_missing_field_pct('neighborhood')
             if 'بلدية' in query:
                 return self._handle_missing_field_pct('municipality')
+
+        # Pattern MUNICIPALITY: pesticides / breakdown / comparison by بلدية.
+        # Municipalities come from the resolver (exact DB values), never from
+        # slicing the words after 'بلدية'.
+        if resolution is not None and resolution.mentions_municipality:
+            muns = resolution.municipalities
+            wants_breakdown = 'أنواع' in query or 'مفصلة' in query or 'حسب نوع' in query
+            is_compare = 'قارن' in query or 'مقابل' in query
+            if is_compare and len(muns) >= 2:
+                metric = 'pesticides' if 'المبيدات' in query or 'مبيدات' in query else 'violation_rate'
+                return self._handle_municipality_comparison(muns[0], muns[1], metric=metric)
+            if muns and not is_compare:
+                if wants_breakdown:
+                    return self._handle_municipality_breakdown(muns[0])
+                return self._handle_municipality_pesticides(muns[0])
+            if resolution.all_municipalities and wants_breakdown:
+                return self._handle_municipality_breakdown(None)
+            if not muns and (is_compare or wants_breakdown or 'مبيدات' in query or 'المبيدات' in query):
+                return self._unresolved_municipality_message(), None
         # Pattern TIME_SERIES: monthly/weekly/quarterly/half-year breakdown
         if 'شهرياً' in query or 'كل شهر' in query or 'مفحوصة شهرياً' in query:
             return self._handle_time_series_breakdown('month')
@@ -431,7 +434,8 @@ class KeywordPatternsMixin:
             n = int(n_match.group(1)) if n_match else 3
             return self._handle_hri_top_consumed(n)
         if any(kw in query_lower for kw in hri_kws_en) and detected_samples:
-            return self._handle_health_risk_index(detected_samples)
+            group = resolution.pesticide_group if resolution is not None else None
+            return self._handle_health_risk_index(detected_samples, pesticide_group=group)
 
         # Pattern QI: Quality Index
         qi_kws_en = [
@@ -487,10 +491,14 @@ class KeywordPatternsMixin:
             'ورقيات': 'leafy', 'الورقيات': 'leafy',
         }
         _cat_key_process = None
-        for kw, cat in _cat_en_map.items():
-            if kw in query_lower:
-                _cat_key_process = cat
-                break
+        if resolution is not None:
+            # Resolved DB category ('Spices'); the handlers filter "نوع العينة" = ?
+            _cat_key_process = resolution.categories[0] if resolution.categories else None
+        else:
+            for kw, cat in _cat_en_map.items():
+                if kw in query_lower:
+                    _cat_key_process = cat
+                    break
         if detected_pesticide and _cat_key_process and not detected_samples:
             return self._handle_category_pesticide(detected_pesticide, _cat_key_process, [])
 
@@ -507,7 +515,9 @@ class KeywordPatternsMixin:
                 _test_type = 'mycotoxin'
             elif 'pesticide' in query_lower:
                 _test_type = 'pesticide'
-            return self._handle_category_limit_summary(_cat_key_process, detected_samples, _test_type)
+            _by_pesticide = 'المبيدات' in query or 'السموم' in query
+            return self._handle_category_limit_summary(_cat_key_process, detected_samples, _test_type,
+                                                       by_pesticide=_by_pesticide)
 
         # Pattern AVG_LIMIT: Average concentration above/below limit
         # "average concentration of imidacloprid above limit"
@@ -625,7 +635,9 @@ class KeywordPatternsMixin:
             return self._handle_top_n_by_metric('facility', 'count', 10)
 
         # Pattern A040: pesticides never detected in a category
-        if 'لم تظهر إطلاقاً' in query and 'فواكه' in query:
+        if ('لم تظهر' in query or 'لم يظهر' in query) and resolution is not None and resolution.categories:
+            return self._handle_never_detected_in_category(resolution.categories[0])
+        if resolution is None and 'لم تظهر إطلاقاً' in query and 'فواكه' in query:
             return self._handle_never_detected_in_category('fruit')
 
         # Pattern B036: classification-vs-calculation violation count diff

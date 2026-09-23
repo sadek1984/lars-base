@@ -9,11 +9,12 @@ relocates them. RoutingMixin is mixed into CoreQueryEngine — methods refer to
 engine state (self._get_connection(), detection helpers, handlers) via self.
 """
 import logging
+import re
 from typing import List, Optional, Tuple
 
 import pandas as pd
 
-from modules.query.mappings import get_pesticide_sql_filter
+from modules.query.mappings import get_pesticide_sql_filter_params
 
 # Intent router (optional - graceful fallback, same guard as core_query_engine)
 try:
@@ -205,7 +206,12 @@ class RoutingMixin:
                     )
                 return self._handle_find_pesticide_in_sample(entities.pesticide, entities.samples, date_filter=date_filter)
             if intent == Intent.FIND_PESTICIDE_IN_CATEGORY and entities.pesticide and entities.category:
-                return self._handle_pesticide_in_category(entities.pesticide, entities.category, date_filter=date_filter)
+                # "ما هي الخضروات التي…" / "في أي التوابل…" ask WHICH products → one row per product
+                which_products = entities.wants_types or bool(
+                    re.search(r"(^|\s)(في\s+)?[أا]ي\s", entities.raw_query or ""))
+                return self._handle_pesticide_in_category(entities.pesticide, entities.category,
+                                                          date_filter=date_filter,
+                                                          group_by_product=which_products)
             if intent == Intent.FIND_PESTICIDE_ALL and entities.pesticide:
                 return self._handle_find_pesticide_all(entities.pesticide, date_filter=date_filter)
             
@@ -258,14 +264,44 @@ class RoutingMixin:
         return text, df, None
 
     def _handle_pesticide_in_category(self, pesticide: str, category_keyword: str,
-                                   date_filter: Optional[str] = None) -> Tuple[str, pd.DataFrame]:
-        """Pesticide detections within a food category — uses IntentRouter's
-        CATEGORY_MAP directly via get_category_sql(), avoiding the English/Arabic
-        key mismatch that broke _handle_category_pesticide()'s CATEGORY_AR lookup."""
+                                   date_filter: Optional[str] = None,
+                                   group_by_product: bool = False) -> Tuple[str, pd.DataFrame]:
+        """Pesticide detections within a food category, filtered on the stored
+        "نوع العينة" value (the router passes the resolved DB category).
+        group_by_product=True answers "which products" with one row per product,
+        so a large category is not truncated by the detection-row LIMIT."""
+        sample_filter, cat_params, cat_name = self._category_or_samples_filter(category_keyword, [])
+        if sample_filter is None:
+            return f"⚠️ فئة غير معروفة في البيانات: {category_keyword}", pd.DataFrame()
+        pest_sql, pest_params = get_pesticide_sql_filter_params(pesticide)
+        params = pest_params + cat_params
         con = self._get_connection()
-        cat_name, cat_sql = IntentRouter.get_category_sql(category_keyword) if HAS_INTENT_ROUTER else ("العينات", "")
-        cat_filter = f"AND {cat_sql}" if cat_sql else ""
         date_clause = date_filter or ""
+
+        if group_by_product:
+            sql = f"""
+            SELECT
+                "اسم العينة" AS sample_name,
+                COUNT(*) AS detections,
+                COUNT(DISTINCT "كود العينة") AS unique_samples,
+                COUNT(DISTINCT CASE WHEN sample_result = 'Non-Compliant' THEN "كود العينة" END) AS non_compliant
+            FROM chemistry_tidy
+            WHERE is_detected = 1
+            AND ({pest_sql})
+            AND {sample_filter}
+            {date_clause}
+            GROUP BY "اسم العينة"
+            ORDER BY detections DESC
+            """
+            df = con.execute(sql, params).df()
+            con.close()
+            if df.empty:
+                return f"⚠️ لم يتم رصد **{pesticide}** في **{cat_name}**", df
+            response = f"🔍 **{pesticide} في {cat_name}:** ظهر في **{len(df)}** منتج\n\n"
+            response += (f"✅ {int(df['unique_samples'].sum())} عينة فريدة | "
+                         f"{int(df['detections'].sum())} سجل اكتشاف\n\n")
+            response += df.to_markdown(index=False)
+            return response, df
 
         sql = f"""
         SELECT
@@ -278,13 +314,13 @@ class RoutingMixin:
             sample_result  AS status
         FROM chemistry_tidy
         WHERE is_detected = 1
-        AND ({get_pesticide_sql_filter(pesticide)})
-        {cat_filter}
+        AND ({pest_sql})
+        AND {sample_filter}
         {date_clause}
         ORDER BY "كود العينة" DESC
         LIMIT 100
         """
-        df = con.execute(sql).df()
+        df = con.execute(sql, params).df()
         con.close()
 
         if not df.empty:

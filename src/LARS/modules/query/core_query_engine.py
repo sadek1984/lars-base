@@ -31,6 +31,7 @@ from modules.query.mappings import (
     normalize_arabic_query,
     get_pesticide_variants,
     get_pesticide_sql_filter,
+    get_pesticide_sql_filter_params,
     normalize_arabic_text
 )
 
@@ -59,6 +60,7 @@ from modules.utils.prompt_loader import load_prompt
 
 from modules.query.advanced_handlers import AdvancedHandlersMixin
 from modules.query.entity_detection import EntityDetectionMixin
+from modules.query.entity_resolver import EntityResolver
 from modules.query.time_period import TimePeriodMixin
 from modules.query.routing import RoutingMixin
 from modules.query.keyword_patterns import KeywordPatternsMixin
@@ -103,6 +105,8 @@ class CoreQueryEngine(
         
         self._load_mappings()
         self._load_schema_info()
+        self._resolver = None
+        self._resolution_cache: Tuple[Optional[str], Any] = (None, None)
         
         # Initialize semantic pattern recognizer (optional)
         self.semantic_recognizer = get_semantic_recognizer() if HAS_SEMANTIC else None
@@ -113,7 +117,8 @@ class CoreQueryEngine(
         
         # Initialize intent-based query router (optional)
         if HAS_INTENT_ROUTER:
-            self.router = IntentRouter(dialect_synonyms=self.dialect_synonyms)
+            self.router = IntentRouter(dialect_synonyms=self.dialect_synonyms,
+                                       resolver_provider=self._get_resolver)
             print("✅ Intent Router loaded!")
         else:
             self.router = None
@@ -219,6 +224,46 @@ class CoreQueryEngine(
         self.neighborhood_patterns = NEIGHBORHOOD_CORRECTIONS
         self.arabic_pesticide_map = PESTICIDE_AR_TO_EN
     
+    def _get_resolver(self):
+        """EntityResolver over this DB's real values, built once. None if the DB is unavailable."""
+        if self._resolver is None:
+            try:
+                con = self._get_connection()
+                try:
+                    self._resolver = EntityResolver(con)
+                finally:
+                    con.close()
+            except Exception as exc:
+                logging.warning(f"EntityResolver unavailable, using dictionary fallback: {exc}")
+                return None
+        return self._resolver
+
+    def _resolve(self, query: str):
+        """Resolution for `query`, cached for the current question (several extractors ask)."""
+        resolver = self._get_resolver()
+        if resolver is None:
+            return None
+        cached_q, cached_res = self._resolution_cache
+        if cached_q != query:
+            cached_res = resolver.resolve(query)
+            self._resolution_cache = (query, cached_res)
+        return cached_res
+
+    def _unresolved_product_message(self, terms: List[str]) -> str:
+        names = "، ".join(f"«{t}»" for t in terms)
+        return (f"⚠️ لم أجد {names} ضمن أسماء العينات في البيانات الحالية. "
+                f"تأكد من اسم المنتج، أو اسأل عن فئة (خضار، فواكه، توابل، مكسرات، حبوب).")
+
+    def _unresolved_municipality_message(self) -> str:
+        resolver = self._get_resolver()
+        known = "، ".join(resolver.db_municipalities) if resolver else ""
+        return f"⚠️ لم أتعرف على البلدية المذكورة في السؤال. البلديات المتاحة في البيانات: {known}"
+
+    @staticmethod
+    def _in_clause(column: str, values: List[str]) -> Tuple[str, List[str]]:
+        """`"column" IN (?, ...)` plus its params — for exact resolved DB values."""
+        return f'"{column}" IN ({", ".join("?" for _ in values)})', list(values)
+
     def _get_connection(self) -> duckdb.DuckDBPyConnection:
         """Return a read-only DuckDB connection.
 
@@ -450,6 +495,14 @@ class CoreQueryEngine(
         oos_result = self._check_out_of_scope(query, query_lower)
         if oos_result is not None:
             return oos_result
+
+        # ── Unresolved entity gate: a product was named but matches nothing in
+        # the data. Answer that honestly instead of letting a handler run a
+        # filter that can only return 0 rows.
+        resolution = ctx.get('resolution')
+        if (resolution is not None and resolution.product_terms_unresolved
+                and not resolution.products and not resolution.categories):
+            return self._unresolved_product_message(resolution.product_terms_unresolved), None
 
         # ── Tier 0: Explicit compliance-status override ──────────────────────
         # Official lab verdict (sample_result) keywords — "غير مطابقة" / "راسبة" /
@@ -875,16 +928,21 @@ class CoreQueryEngine(
         """
         con = self._get_connection()
 
-        sample_filter = f"AND {self._build_sample_filter(samples)}" if samples else ""
+        params: List[str] = []
+        sample_filter = ""
+        if samples:
+            sample_sql, sample_params = self._in_clause("اسم العينة", samples)
+            sample_filter = f"AND {sample_sql}"
+            params += sample_params
 
         neighborhood_filter = ""
         if neighborhoods:
-            hood_conditions = []
+            hood_variants = []
             for n in neighborhoods:
-                variants = {n, n.replace('ا', 'إ'), n.replace('ا', 'أ'),
-                            n.replace('إ', 'ا'), n.replace('أ', 'ا')}
-                hood_conditions += [f"\"الحى\" LIKE '%{v}%'" for v in variants]
-            neighborhood_filter = f"AND ({' OR '.join(hood_conditions)})"
+                hood_variants += sorted({n, n.replace('ا', 'إ'), n.replace('ا', 'أ'),
+                                         n.replace('إ', 'ا'), n.replace('أ', 'ا')})
+            neighborhood_filter = "AND (" + " OR ".join('"الحى" LIKE ?' for _ in hood_variants) + ")"
+            params += [f"%{v}%" for v in hood_variants]
 
         date_clause = date_filter or ""
 
@@ -902,7 +960,7 @@ class CoreQueryEngine(
         GROUP BY "اسم العينة"
         ORDER BY sample_count DESC
         """
-        df = con.execute(sql).df()
+        df = con.execute(sql, params).df()
         con.close()
 
         type_display = " + ".join(samples) if samples else "All types"
@@ -1052,7 +1110,8 @@ class CoreQueryEngine(
         """Find a specific pesticide in samples — returns unique sample-level rows."""
         con = self._get_connection()
         
-        sample_filter = self._build_sample_filter(samples)
+        pest_sql, pest_params = get_pesticide_sql_filter_params(pesticide)
+        sample_sql, sample_params = self._in_clause("اسم العينة", samples)
         date_clause = date_filter or ""
         
         sql = f"""
@@ -1066,14 +1125,14 @@ class CoreQueryEngine(
             sample_result    AS status
         FROM chemistry_tidy
         WHERE is_detected = 1 
-        AND ({get_pesticide_sql_filter(pesticide)})
-        AND {sample_filter}
+        AND ({pest_sql})
+        AND {sample_sql}
         {date_clause}
         ORDER BY "كود العينة" DESC
         LIMIT 100
         """
         
-        df = con.execute(sql).df()
+        df = con.execute(sql, pest_params + sample_params).df()
         con.close()
         
         samples_display = ' + '.join(samples)

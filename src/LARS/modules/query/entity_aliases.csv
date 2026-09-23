@@ -1,0 +1,93 @@
+vocabulary,raw_term,resolved_value
+sample_category,خضار,Vegetables
+sample_category,الخضار,Vegetables
+sample_category,خضروات,Vegetables
+sample_category,الخضروات,Vegetables
+sample_category,خضراوات,Vegetables
+sample_category,vegetable,Vegetables
+sample_category,vegetables,Vegetables
+sample_category,فواكه,Fruits
+sample_category,الفواكه,Fruits
+sample_category,فاكهة,Fruits
+sample_category,fruit,Fruits
+sample_category,fruits,Fruits
+sample_category,توابل,Spices
+sample_category,التوابل,Spices
+sample_category,بهارات,Spices
+sample_category,spice,Spices
+sample_category,spices,Spices
+sample_category,مكسرات,Nuts
+sample_category,المكسرات,Nuts
+sample_category,nut,Nuts
+sample_category,nuts,Nuts
+sample_category,حبوب,Grains
+sample_category,الحبوب,Grains
+sample_category,grain,Grains
+sample_category,grains,Grains
+sample_category,ورقيات,Leafy Greens
+sample_category,الورقيات,Leafy Greens
+sample_category,خضار ورقية,Leafy Greens
+sample_category,leafy,Leafy Greens
+sample_category,تمور,Dates
+sample_category,التمور,Dates
+product_head,فلفل,pepper
+product_head,pepper,pepper
+product_head,peppers,pepper
+product_qualifier,حار,hot
+product_qualifier,حارة,hot
+product_qualifier,حلو,sweet
+product_qualifier,حلوة,sweet
+product_qualifier,بارد,sweet
+product_qualifier,باردة,sweet
+product_qualifier,رومي,sweet
+product_qualifier,اخضر,green
+product_qualifier,خضراء,green
+product_qualifier,احمر,red
+product_qualifier,حمراء,red
+product_qualifier,اصفر,yellow
+product_qualifier,صفراء,yellow
+product_qualifier,برتقالي,orange
+product_qualifier,مشكل,mixed
+product_qualifier,ملون,mixed
+product_qualifier,hot,hot
+product_qualifier,sweet,sweet
+product_qualifier,green,green
+product_qualifier,red,red
+product_qualifier,yellow,yellow
+product_qualifier,orange,orange
+product_qualifier,mixed,mixed
+pesticide_group,نيونيكوتينويد,Neonicotinoid
+pesticide_group,نيونيكوتينويدات,Neonicotinoid
+pesticide_group,النيونيكوتينويد,Neonicotinoid
+pesticide_group,neonicotinoid,Neonicotinoid
+pesticide_group,neonicotinoids,Neonicotinoid
+pesticide_group,فوسفورية عضوية,Organophosphate
+pesticide_group,اورجانوفوسفات,Organophosphate
+pesticide_group,organophosphate,Organophosphate
+pesticide_group,organophosphates,Organophosphate
+pesticide_group,بيرثرويد,Pyrethroid
+pesticide_group,بيرثرويدات,Pyrethroid
+pesticide_group,pyrethroid,Pyrethroid
+pesticide_group,pyrethroids,Pyrethroid
+pesticide_group,كاربامات,Carbamate
+pesticide_group,carbamate,Carbamate
+pesticide_group,carbamates,Carbamate
+pesticide_group,ستروبيلورين,Strobilurin Fungicide
+pesticide_group,strobilurin,Strobilurin Fungicide
+pesticide_group,تريازول,Triazole Fungicide
+pesticide_group,triazole,Triazole Fungicide
+product_alias,ملوخية,Molokhia
+product_alias,molokhia,Molokhia
+product_alias,جرجير,Arugula
+product_alias,arugula,Arugula
+product_alias,rocket,Arugula
+product_alias,طحينة سمسم,Tahini
+product_alias,طحينة السمسم,Tahini
+product_alias,sesame tahini,Tahini
+product_alias,تمر سكري,Sukari Dates
+product_alias,تمر اخلاص,Khlas Dates
+product_alias,تمر خلاص,Khlas Dates
+product_alias,ليمون اسود,Dried Lemon
+product_alias,dried lime,Dried Lemon
+product_alias,دقيق بر,Brown Wheat Flour
+product_alias,دقيق بر,Brown Flour

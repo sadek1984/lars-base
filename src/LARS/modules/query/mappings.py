@@ -22,7 +22,7 @@ Usage:
 from __future__ import annotations
 
 from difflib import get_close_matches
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import re
 import unicodedata
 
@@ -239,7 +239,7 @@ PESTICIDE_VARIANTS: Dict[str, List[str]] = {
     # Detected potential typos
     "chlorantraniliprole": ["chlorantraniliprole", "chlorantraniliprle", "chlorantraniliproel"],
     "chlorpyrifos": ["chlorpyrifos", "chlorpyriphos"],
-    "clothianidin": ["clothianidin", "clothiandin", "clothindin"],
+    "clothianidin": ["clothianidin", "clothiandin", "clothindin", "clothandin", "clothaindin"],
     "cyantraniliprole": ["cyantraniliprole", "cyanantraniliprole"],
     "cypermethrin": ["cypermethrin", "cyprtmethrin"],
     "deltamethrin": ["deltamethrin", "deltamithrin"],
@@ -247,14 +247,14 @@ PESTICIDE_VARIANTS: Dict[str, List[str]] = {
     "fenhexamid": ["fenhexamid", "fenhexamide"],
     "fenpyroximate": ["fenpyroximate", "fenpyroxymate"],
     "fluopyram": ["fluopyram", "fluoptram"],
-    "imidacloprid": ["imidacloprid", "imidaclopride", "imidaclprid"],
+    "imidacloprid": ["imidacloprid", "imidaclopride", "imidaclprid", "imidacloorid", "imidaclopeid"],
     "mandipropamid": ["mandipropamid", "mandiprobamid"],
     "metalaxyl": ["metalaxyl", "metalazyl"],
     "methoxyfenozide": ["methoxyfenozide", "methoxyfenozid"],
     "myclobutanil": ["myclobutanil", "myclobutanyl"],
     "piperonyl butoxide": ["piperonyl butoxide", "pipronil butoxid", "pipronil-butoxid"],
     "abamectin": ["abamectin", "abmectin"],
-    "acetamiprid": ["acetamiprid", "acetamiprod"],
+    "acetamiprid": ["acetamiprid", "acetamiprod", "acetamipeid"],
     "azoxystrobin": ["azoxystrobin", "azoxystrobn"],
 }
 
@@ -283,19 +283,30 @@ def get_pesticide_sql_filter(pesticide: str) -> str:
     DB has many typos: clothiandin/clothianidin, bifenazate, cyprtmethrin etc.
     This uses LOWER + LIKE prefix to catch all variants.
     """
+    return ' OR '.join(f"LOWER(pesticide_name) {op} '{v}'" for op, v in _pesticide_filter_terms(pesticide))
+
+
+def get_pesticide_sql_filter_params(pesticide: str) -> Tuple[str, List[str]]:
+    """Same filter as get_pesticide_sql_filter(), as (sql with ? placeholders, params)."""
+    terms = _pesticide_filter_terms(pesticide)
+    return ' OR '.join(f"LOWER(pesticide_name) {op} ?" for op, _ in terms), [v for _, v in terms]
+
+
+def _pesticide_filter_terms(pesticide: str) -> List[Tuple[str, str]]:
+    """(operator, value) pairs OR-ed together by the two filter builders above."""
     p = pesticide.strip()
     if p.startswith('ال') and len(p) > 4:
         p = p[2:]
     p_lower = p.lower()
 
-    conditions = set()
+    conditions: Dict[Tuple[str, str], None] = {}
     # Exact match
-    conditions.add(f"LOWER(pesticide_name) = '{p_lower}'")
+    conditions[("=", p_lower)] = None
     # Substring match — catches metabolites and compound names
-    conditions.add(f"LOWER(pesticide_name) LIKE '%{p_lower}%'")
+    conditions[("LIKE", f"%{p_lower}%")] = None
     # Prefix match (7 chars) — catches suffix typos
     if len(p_lower) >= 6:
-        conditions.add(f"LOWER(pesticide_name) LIKE '{p_lower[:7]}%'")
+        conditions[("LIKE", f"{p_lower[:7]}%")] = None
 
     # Known variant groups based on ACTUAL DB typos discovered
     VARIANT_GROUPS = {
@@ -362,10 +373,10 @@ def get_pesticide_sql_filter(pesticide: str) -> str:
         if (key in p_lower or p_lower in key or
                 (len(p_lower) >= 5 and len(key) >= 5 and p_lower[:5] == key[:5])):
             for v in variants:
-                conditions.add(f"LOWER(pesticide_name) LIKE '%{v.lower()}%'")
+                conditions[("LIKE", f"%{v.lower()}%")] = None
             break
 
-    return ' OR '.join(conditions)
+    return list(conditions)
 
 
 # ============================================================================
@@ -1102,6 +1113,25 @@ try:
 except ImportError:
     _HAS_RAPIDFUZZ = False
     import difflib
+
+
+# Words that mean "pesticide(s)" / "residues" generically. They are not names,
+# so they are dropped before fuzzy matching (see strip_generic_pesticide_words).
+_GENERIC_PESTICIDE_STEMS = {
+    "مبيد", "مبيدات", "مبيدين", "المبيد", "المبيدات", "سموم", "السموم",
+    "فطريه", "الفطريه", "متبقيات", "المتبقيات", "بقايا",
+}
+
+
+def strip_generic_pesticide_words(query_normalized: str) -> str:
+    """Drop generic pesticide words (with و/ب/ل/لل clitics) from a normalized query."""
+    kept = []
+    for w in query_normalized.split():
+        bare = w.strip("؟?،,.!")
+        forms = {bare} | {bare[len(p):] for p in ("وال", "بال", "لل", "و", "ب", "ل") if bare.startswith(p)}
+        if not forms & _GENERIC_PESTICIDE_STEMS:
+            kept.append(w)
+    return " ".join(kept)
 
 
 def fuzzy_match_pesticide_ar(query_normalized_nospace: str, threshold: int = 82) -> Optional[str]:
