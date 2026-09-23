@@ -489,3 +489,28 @@ careful comparing sample volumes against a full prior-year season.
 `_render_level_table()` calls `effective_days_since()` per row via
 `.apply()`, each doing its own DB round-trip. Fine up to the current
 `top_n` ceiling of 50; batch into a single query if that ceiling is raised.
+
+## Data reload pipeline
+
+After **any** data reload, run these three scripts in this exact order:
+
+```bash
+cd src/LARS
+python scripts/transform_chemistry_data.py      # 1. ETL: rebuilds chemistry_tidy
+python scripts/add_test_date.py --apply         # 2. adds test_date (DATE) parsed from "التاريخ"
+python scripts/build_sample_summary.py          # 3. rebuilds sample_summary snapshot
+```
+
+> ⚠️ **Why the order matters**
+> - `transform_chemistry_data.py` recreates `chemistry_tidy` from scratch, so the
+>   `test_date` column is **lost on every reload** until step 2 runs again.
+> - `sample_summary` is a **snapshot**, not a live view. It goes stale whenever
+>   `chemistry_tidy` changes, and it reads `test_date`, so it must be built last.
+> - Close DBeaver (or any open connection) before running: DuckDB allows only one writer.
+
+**Checks after step 3:** `sample_date type=DATE`, and the NULL count matches the
+known samples without a recorded date.
+
+### TODO (post-demo)
+Fold steps 2 and 3 into `transform_chemistry_data.py` so a reload is a single
+command and `test_date` can never go missing.
