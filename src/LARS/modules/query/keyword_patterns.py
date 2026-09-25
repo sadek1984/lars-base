@@ -11,11 +11,28 @@ engine state (self._get_connection(), detection helpers, handlers) via self.
 import re
 from typing import Optional, Tuple
 
+from modules.query.text_norm import COUNT_NOUNS, count_for_nouns, norm, number_value, tokens
+
 import pandas as pd
 
 
 class KeywordPatternsMixin:
-    _ARABIC_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
+    @staticmethod
+    def _top_n(query: str, default: Optional[int] = None) -> Optional[int]:
+        """N for "top N" questions, digits or words: the number right after
+        أعلى ("أعلى ٥", "أعلى خمسة"), else a number that quantifies a count
+        noun ("أخطر خمس أحياء", "الأحياء الخمسة"), else `default`.
+        Numbers that quantify nothing ("الحد الآمن الواحد") are ignored."""
+        toks = tokens(query)
+        for i, t in enumerate(toks[:-1]):
+            if t in ("اعلى", "اكثر", "اخطر", "افضل", "اقل"):
+                v = number_value(toks[i + 1])
+                if v is not None:
+                    return v
+        # Entity nouns only: "آخر ٣ أشهر" is a period, not a top-N.
+        counts = count_for_nouns(query, COUNT_NOUNS["pesticides"] | COUNT_NOUNS["places"]
+                                 | COUNT_NOUNS["products"])
+        return counts[0] if counts else default
 
     def _dispatch_rate_breakdown(self, ctx: dict) -> Optional[Tuple[str, Optional[pd.DataFrame]]]:
         """Rate / performance questions broken down by municipality, neighborhood
@@ -32,8 +49,7 @@ class KeywordPatternsMixin:
         if ctx['detected_samples'] or ctx['detected_neighborhoods'] or (
                 resolution is not None and (resolution.municipalities or resolution.categories)):
             return None
-        n_match = re.search(r'(\d+)', query.translate(self._ARABIC_DIGITS))
-        n = int(n_match.group(1)) if n_match else None
+        n = self._top_n(query)
 
         if any(w in query for w in ('كل بلدية', 'لكل بلدية', 'البلديات')):
             return self._handle_top_n_by_metric('municipality', 'rate', n,
@@ -124,7 +140,8 @@ class KeywordPatternsMixin:
                     if 0 <= n_pesticides <= 50:
                         return self._handle_n_pesticides(n_pesticides, detected_samples, date_filter=detected_period)
         # Pattern EXCEED_MULT: "N times the limit"
-        mult_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:ضعف|أضعاف|x|times)', query_lower + " " + query)
+        # Regexes run on the shared normalized text (text_norm.norm), like `in`.
+        mult_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:ضعف|اضعاف|x|times)', norm(query_lower + " " + query))
         exceed_kws = ['أضعاف الحد', 'ضعف الحد', 'times the limit', 'times the mrl', 'اضعاف', 'ضعف']
         if any(kw in query for kw in exceed_kws):
             if mult_match:
@@ -133,9 +150,10 @@ class KeywordPatternsMixin:
                 # Bare "ضعف" with no digit means "double" (multiplier = 2),
                 # same pattern as "مبيدين" implying 2 without a numeral.
                 multiplier = 2.0
-            return self._handle_exceedance_multiplier(detected_samples, multiplier, _detected_category_key)
+            return self._handle_exceedance_multiplier(detected_samples, multiplier, _detected_category_key,
+                                                      pesticide=detected_pesticide)
         # Pattern PROXIMITY: "between X% and Y% of the limit"
-        pct_matches = re.findall(r'(\d+)\s*٪|(\d+)\s*%', query)
+        pct_matches = re.findall(r'(\d+)\s*٪|(\d+)\s*%', norm(query))
         pct_nums = [int(a or b) for a, b in pct_matches]
         proximity_kws = ['قريبة من الحد', 'تحت الحد المسموح لكن فوق']
         if len(pct_nums) >= 1 and any(kw in query for kw in proximity_kws):
@@ -171,8 +189,7 @@ class KeywordPatternsMixin:
 
         # Pattern B050: top N readings by % exceedance
         if 'أعلى' in query and ('قراءات' in query) and ('تجاوزاً' in query or 'بالنسبة المئوية' in query):
-            n_match = re.search(r'أعلى\s*(\d+)', query)
-            n = int(n_match.group(1)) if n_match else 10
+            n = self._top_n(query, default=10)
             return self._handle_top_exceedance_readings(n)
 
         # Pattern REPORT: general "تقرير" (report) dispatcher — routes to
@@ -202,9 +219,8 @@ class KeywordPatternsMixin:
             return self._handle_kpi_summary()
 
         # Pattern TOP_N: top N products/facilities by rate or count
-        top_n_match = re.search(r'أعلى\s+(\d+)', query)
-        if top_n_match:
-            n = int(top_n_match.group(1))
+        n = self._top_n(query) if 'أعلى' in query else None
+        if n:
             if ('نسبة الرسوب' in query or 'نسبة المخالفة' in query) and 'منتج' in query:
                 return self._handle_top_n_by_metric('product', 'rate', n)
             if 'عدد المخالفات' in query and 'منتج' in query:
@@ -474,16 +490,14 @@ class KeywordPatternsMixin:
         if 'أعلى' in query and 'استهلاكاً' in query and any(
             kw in query_lower for kw in hri_kws_en
         ):
-            n_match = re.search(r'أعلى\s*(\d+)', query)
-            n = int(n_match.group(1)) if n_match else 3
+            n = self._top_n(query, default=3)
             return self._handle_hri_top_consumed(n)
 
         if 'متوسط عدد المبيدات' in query and ('الحد الآمن' in query or 'الآمن' in query):
             return self._handle_avg_pesticides_high_risk_samples(1.0)
 
         if 'أعلى' in query and 'استهلاكاً' in query and any(kw in query_lower for kw in hri_kws_en):
-            n_match = re.search(r'أعلى\s*(\d+)', query)
-            n = int(n_match.group(1)) if n_match else 3
+            n = self._top_n(query, default=3)
             return self._handle_hri_top_consumed(n)
         if any(kw in query_lower for kw in hri_kws_en) and detected_samples:
             group = resolution.pesticide_group if resolution is not None else None
@@ -701,7 +715,7 @@ class KeywordPatternsMixin:
             return self._handle_total_violations(date_filter=detected_period)
 
         # Pattern B047: facilities exceeding a violation-count threshold
-        facility_thresh_match = re.search(r'أكثر من\s*(\d+)\s*مر', query)
+        facility_thresh_match = re.search(r'اكثر من\s*(\d+)\s*مر', norm(query))
         if facility_thresh_match and 'منشآت' in query:
             return self._handle_facility_violation_threshold(int(facility_thresh_match.group(1)))
 

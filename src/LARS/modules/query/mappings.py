@@ -1158,3 +1158,95 @@ def fuzzy_match_pesticide_ar(query_normalized_nospace: str, threshold: int = 82)
         if score > best_score:
             best_score, best_match = score, en_val
     return best_match if best_score >= threshold else None
+
+
+# ============================================================================
+# PESTICIDE DETECTION — shared by BOTH extraction layers
+# ============================================================================
+# EntityDetectionMixin._detect_pesticide (Tier 3 ctx) and
+# IntentRouter._extract_pesticide (Tier 2) both call this, so a misheard
+# name like 'الكاربندازين' resolves the same way in every tier. It used to
+# live only in the ctx layer; the router had no fuzzy step.
+
+def detect_pesticide(query: str) -> Optional[str]:
+    """
+    كشف المبيد — Arabic-first, English fallback.
+
+    BUGFIX: the original version only checked whether the English
+    canonical name appeared literally in the query text — which
+    only ever matches Latin-script mentions embedded in an Arabic
+    sentence (e.g. "ابحث عن bifenthrin"). Pure-Arabic pesticide
+    names like "الإيميداكلوبرايد" never matched here even though
+    the exact same string correctly resolves via
+    IntentRouter._extract_pesticide()'s PESTICIDE_AR_TO_EN lookup.
+    Since this method feeds ctx['detected_pesticide'] — shared by
+    Tier 0, the semantic tier, and Tier 3 — that gap silently
+    broke every Arabic-only pesticide query that Tier 2 didn't
+    already classify into a pesticide-carrying intent.
+
+    Order:
+      1. Arabic key match against PESTICIDE_AR_TO_EN
+         (== PESTICIDE_AR_TO_EN), longest key first so e.g.
+         "الأيميداكلوبريد" doesn't get shadowed by a shorter
+         partial key.
+      2. English canonical name literal match (Latin-script
+         mentions mid-Arabic-sentence, e.g. "bifenthrin").
+      3. Common-name fallback list (English), for names that
+         might be missing from PESTICIDE_AR_TO_EN's keys.
+    """
+    # 1. Arabic — normalized match (handles hamza/ta-marbuta/ال-prefix
+    # spelling variants). Longest keys first to avoid short-prefix
+    # shadowing, e.g. matching "بابروفيزن" before a shorter substring
+    # of a different pesticide name.
+    from modules.query.mappings import (
+        PESTICIDE_AR_TO_EN_NORM,
+        PESTICIDE_AR_TO_EN_NORM_NOSPACE,
+        normalize_arabic_text,
+    )
+    norm_query = normalize_arabic_text(query)
+    for norm_key in sorted(PESTICIDE_AR_TO_EN_NORM.keys(), key=len, reverse=True):
+        if norm_key in norm_query:
+            return PESTICIDE_AR_TO_EN_NORM[norm_key]
+
+    # 1c. Fuzzy phonetic fallback — catches ASR letter insertions/drops
+    # that exact and space-insensitive matching above miss (see
+    # fuzzy_match_pesticide_ar's docstring for why this is necessary
+    # rather than another dictionary entry).
+    # Generic words ("المبيدات", "السموم الفطرية") are removed first: on their
+    # own they fuzzy-score >= 82 against 'اللامبدا' and used to inject
+    # lambda-cyhalothrin into questions that name no pesticide at all.
+    from modules.query.mappings import fuzzy_match_pesticide_ar, strip_generic_pesticide_words
+    _nospace_for_fuzzy = strip_generic_pesticide_words(norm_query).replace(" ", "")
+    fuzzy_result = fuzzy_match_pesticide_ar(_nospace_for_fuzzy) if _nospace_for_fuzzy else None
+    if fuzzy_result:
+        return fuzzy_result
+    # 1b. Arabic — space-insensitive fallback for compound transliterated
+    # names (e.g. "الأزوكسي ستروبين" vs dict's "الازوكسيستروبين").
+    # Scoped to pesticide names only — see mappings.py for rationale.
+    nospace_query = norm_query.replace(" ", "")
+    for norm_key in sorted(PESTICIDE_AR_TO_EN_NORM_NOSPACE.keys(), key=len, reverse=True):
+        if norm_key in nospace_query:
+            return PESTICIDE_AR_TO_EN_NORM_NOSPACE[norm_key]
+
+    # 2. English canonical values, literal substring match
+    query_lower = query.lower()
+    unique_en_pesticides = sorted(
+        set(PESTICIDE_AR_TO_EN.values()), key=len, reverse=True
+    )
+    for en_name in unique_en_pesticides:
+        if en_name.lower() in query_lower:
+            return en_name
+
+    # 3. Common-name fallback (in case PESTICIDE_AR_TO_EN is missing some)
+    pesticide_names_common = [
+        'bifenthrin', 'chlorpyrifos', 'imidacloprid', 'deltamethrin', 'cypermethrin',
+        'abamectin', 'acetamiprid', 'thiamethoxam', 'carbendazim', 'buprofezin',
+        'profenofos', 'metalaxyl', 'fipronil', 'emamectin', 'pyriproxyfen',
+        'azoxystrobin', 'difenoconazole', 'lambda-cyhalothrin', 'spinosad'
+    ]
+    for en_name in pesticide_names_common:
+        if en_name in query_lower:
+            return en_name
+
+    return None
+

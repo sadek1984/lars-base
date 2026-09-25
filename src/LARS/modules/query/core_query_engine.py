@@ -61,7 +61,9 @@ from modules.utils.prompt_loader import load_prompt
 from modules.query.advanced_handlers import AdvancedHandlersMixin
 from modules.query.entity_detection import EntityDetectionMixin
 from modules.query.entity_resolver import EntityResolver
-from modules.query.messages import CANNOT_COMPUTE_RATE_MESSAGE, POLITE_ERROR_MESSAGE
+from modules.query.messages import (CANNOT_COMPUTE_RATE_MESSAGE, EU_MRL_COUNT_LABEL,
+                                    POLITE_ERROR_MESSAGE, eu_mrl_markdown)
+from modules.query.text_norm import compliance_intent
 
 
 class DatabaseUnavailableError(RuntimeError):
@@ -254,10 +256,17 @@ class CoreQueryEngine(
             self._resolution_cache = (query, cached_res)
         return cached_res
 
-    def _unresolved_product_message(self, terms: List[str]) -> str:
+    def _unresolved_product_message(self, terms: List[str],
+                                    suggestions: Optional[Dict[str, str]] = None) -> str:
         names = "، ".join(f"«{t}»" for t in terms)
-        return (f"⚠️ لم أجد {names} ضمن أسماء العينات في البيانات الحالية. "
+        hints = [f"«{suggestions[t]}»" for t in terms if suggestions and t in suggestions]
+        hint = f" هل تقصد {' أو '.join(hints)}؟" if hints else ""
+        return (f"⚠️ لم أجد {names} ضمن أسماء العينات في البيانات الحالية.{hint} "
                 f"تأكد من اسم المنتج، أو اسأل عن فئة (خضار، فواكه، توابل، مكسرات، حبوب).")
+
+    def _unresolved_period_message(self) -> str:
+        return ("⚠️ لم أتمكن من فهم الفترة الزمنية المذكورة في السؤال، ولن أجيب على كامل "
+                "البيانات بدلاً منها. جرّب صيغة مثل «آخر ٣ أشهر» أو «الشهر الماضي» أو اسم الشهر.")
 
     def _unresolved_municipality_message(self) -> str:
         resolver = self._get_resolver()
@@ -512,6 +521,7 @@ class CoreQueryEngine(
         which tier produced the answer.
         """
         ctx = self._extract_context(query)
+        query = ctx['query']                      # NormText: normalized `in` matching
         query_normalized = ctx['query_normalized']
         query_lower      = ctx['query_lower']
         detected_samples      = ctx['detected_samples']
@@ -539,7 +549,13 @@ class CoreQueryEngine(
         resolution = ctx.get('resolution')
         if (resolution is not None and resolution.product_terms_unresolved
                 and not resolution.products and not resolution.categories):
-            return self._unresolved_product_message(resolution.product_terms_unresolved), None
+            return self._unresolved_product_message(
+                resolution.product_terms_unresolved, getattr(resolution, "product_suggestions", {})), None
+
+        # Same for a relative period that was named but not understood:
+        # never drop it and answer over the whole dataset.
+        if ctx.get('period_unresolved'):
+            return self._unresolved_period_message(), None
 
         # ── Tier 0: Explicit compliance-status override ──────────────────────
         # Official lab verdict (sample_result) keywords — "غير مطابقة" / "راسبة" /
@@ -548,18 +564,27 @@ class CoreQueryEngine(
         # generic "above/below limit" (is_above_limit) queries. is_above_limit is
         # a *technical* per-pesticide reading vs its MRL; sample_result is the
         # chemist's *official* pass/fail decision — they are not the same thing.
-        non_compliant_ar_kws = [
-            'غير مطابقة', 'الغير مطابقة', 'غير المطابقة',
-            'راسبة', 'الراسبة', 'راسب', 'رواسب', 'فاشلة', 'فشلت', 'مرفوضة',
-        ]
-        compliant_ar_kws = ['مطابقة', 'ناجحة', 'مقبولة']
-        is_non_compliant_ar = any(kw in query for kw in non_compliant_ar_kws)
-        is_compliant_ar = (not is_non_compliant_ar) and any(kw in query for kw in compliant_ar_kws)
+        # Vocabulary lives in text_norm.compliance_intent (normalized, incl.
+        # dialect/verb forms رسبت، ما طابقت، طابقت، نجحت).
+        verdict = compliance_intent(query)
+        is_non_compliant_ar = verdict == 'non_compliant'
+        is_compliant_ar = verdict == 'compliant'
 
         # Rate breakdowns by municipality / neighborhood / month must win over the
         # compliance override below, which matches 'المطابقة' in e.g. D011/D019.
         result = self._dispatch_rate_breakdown(ctx)
 
+        # With a named pesticide ("عينات الطماطم غير المطابقة بسبب البايفنثرين")
+        # the official-verdict filter applies to the samples containing that
+        # pesticide; the product-level table below would drop the pesticide.
+        if result is None and (is_non_compliant_ar or is_compliant_ar) and detected_pesticide and detected_samples:
+            status = 'Non-Compliant' if is_non_compliant_ar else 'Compliant'
+            result = self._handle_sample_pesticide_limit(
+                detected_samples, detected_pesticide, True,
+                limit_filter=f"AND sample_result = '{status}'",
+                limit_desc='غير مطابقة' if is_non_compliant_ar else 'مطابقة',
+                date_filter=detected_period,
+            )
         if result is None and (is_non_compliant_ar or is_compliant_ar):
             result = self._handle_count_samples_compliance_table(
                 detected_samples, detected_neighborhoods, is_non_compliant_ar,
@@ -1092,8 +1117,8 @@ class CoreQueryEngine(
             response += f"📊 **Summary:**\n"
             response += f"• Unique pesticides: **{unique_pesticides}**\n"
             response += f"• Total detections: **{total_detections}**\n"
-            response += f"• Total violations: **{total_violations}**\n\n"
-            response += df.to_markdown(index=False)
+            response += f"• {EU_MRL_COUNT_LABEL}: **{total_violations}**\n\n"
+            response += eu_mrl_markdown(df)
         else:
             response = f"⚠️ No pesticides found in **{sample_display}**"
         
@@ -1394,7 +1419,7 @@ class CoreQueryEngine(
             response += f"• Standard deviation: **{row['std_concentration']}** mg/kg\n"
             response += f"• Range: **{row['range']}** mg/kg\n"
             response += f"• MRL limit: **{row['MRL']}** mg/kg\n"
-            response += f"• Violations: **{int(row['violations'])}**\n"
+            response += f"• {EU_MRL_COUNT_LABEL}: **{int(row['violations'])}**\n"
             response += f"• Spellings combined: {row['spellings_matched']}\n"
         else:
             response = f"⚠️ **{pesticide}** not found in **{sample_display}**"
@@ -1434,7 +1459,7 @@ class CoreQueryEngine(
             df["category"] = df["category"].map(resolver.label_for_category)
         missing = [l for l in labels if l not in set(df["category"])]
         response = f"📊 **Statistics for {pesticide} — {' vs '.join(labels)}**\n\n"
-        response += df.to_markdown(index=False)
+        response += eu_mrl_markdown(df)
         if missing:
             response += f"\n\n⚠️ لم يُرصد {pesticide} في: {'، '.join(missing)}"
         return response, df
@@ -1906,15 +1931,15 @@ class CoreQueryEngine(
 
         if df.empty:
             response = (
-                f"⚠️ No **{cat_label}** sample types found "
-                f"with more than **{threshold}** violation(s)."
+                f"⚠️ لا توجد أنواع عينات في **{cat_label}** "
+                f"لديها أكثر من **{threshold}** نتيجة {EU_MRL_COUNT_LABEL}."
             )
         else:
             response = (
-                f"📊 **{cat_label} sample types with more than {threshold} violation(s):**\n\n"
+                f"📊 **أنواع عينات {cat_label} التي لديها أكثر من {threshold} نتيجة {EU_MRL_COUNT_LABEL}:**\n\n"
                 f"✅ Found **{len(df)}** type(s)\n\n"
             )
-            response += df.to_markdown(index=False)
+            response += eu_mrl_markdown(df)
 
         return response, df
 

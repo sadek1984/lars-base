@@ -58,11 +58,25 @@ def _key(text: str) -> Tuple[str, ...]:
     return tuple(w[2:] if w.startswith("ال") and len(w) > 3 else w for w in words)
 
 
+def _is_arabic(s: str) -> bool:
+    return any("\u0600" <= c <= "\u06ff" for c in s)
+
+
 def _en_tokens(value: str) -> Tuple[str, ...]:
     """English DB value -> lowercase tokens with a trailing plural 's' folded."""
     toks = re.findall(r"[a-z]+", value.lower())
     return tuple(t[:-1] if len(t) > 3 and t.endswith("s") and not t.endswith("ss") else t
                  for t in toks)
+
+
+def _edit_distance(a: str, b: str) -> int:
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1]
 
 
 def canonical_pesticide(name: str) -> str:
@@ -86,6 +100,7 @@ class Resolution:
     mentions_municipality: bool = False
     pesticide_group: Optional[str] = None
     consumed: Set[int] = field(default_factory=set)   # word indices claimed by products/municipalities
+    product_suggestions: Dict[str, str] = field(default_factory=dict)  # misspelled term -> closest product word
 
 
 class EntityResolver:
@@ -167,6 +182,22 @@ class EntityResolver:
         # A lone word may name a few branches ('مصنع السنابل'); more than 5
         # owners means it is too common to identify a facility.
         self.facility_single_word = {(w,): sorted(o) for w, o in word_owners.items() if len(o) <= 5}
+
+        # Near-miss detection for product names ("الفلافل" for "الفلفل"): the
+        # single-word Arabic product vocabulary, and every word the resolver or
+        # the pesticide/neighborhood dictionaries already know (never flagged).
+        from modules.query.mappings import PESTICIDE_AR_TO_EN_NORM, NEIGHBORHOOD_CORRECTIONS_NORM
+        from modules.query.text_norm import _NUMBER_WORDS
+        self.product_words = sorted({k[0] for keys in (self.sample_keys, self.alias_keys, self.head_keys)
+                                     for k in keys if len(k) == 1 and _is_arabic(k[0])})
+        known: Set[str] = set(self.qualifier_keys) | set(_NUMBER_WORDS)
+        for keys in (self.sample_keys, self.alias_keys, self.head_keys, self.category_keys,
+                     self.group_keys, self.municipality_keys, self.facility_keys):
+            for k in keys:
+                known.update(k)
+        for k in list(PESTICIDE_AR_TO_EN_NORM) + list(NEIGHBORHOOD_CORRECTIONS_NORM):
+            known.update(w[2:] if w.startswith("ال") and len(w) > 3 else w for w in k.split())
+        self.known_words = known
 
         from modules.data.pesticide_groups import classify_pesticide
         self.group_pesticides: Dict[str, List[str]] = {}
@@ -256,6 +287,18 @@ class EntityResolver:
             res.consumed.update(span)
             i = span[-1] + 1
 
+        # A word one edit away from a product name ("الفلافل") is a product
+        # the question asked about but the data does not know: report it as
+        # unresolved rather than silently dropping the product filter.
+        for i, st in enumerate(stems):
+            if i in res.consumed or not words[i]:
+                continue
+            near = self._near_miss_product(st)
+            if near:
+                term = question.split()[i].strip("؟?،,.!")
+                res.product_terms_unresolved.append(term)
+                res.product_suggestions[term] = near
+
         says_baladiya = "بلديه" in flat or "بلديات" in flat
         for i in range(len(words)):
             c_len, cat = self._longest(stems, i, self.category_keys)
@@ -290,6 +333,24 @@ class EntityResolver:
             self._match_at(stems, i, k) for i in range(len(words)) for k in _ALL_MUNICIPALITIES
         )
         return res
+
+    def _near_miss_product(self, stems: Set[str]) -> Optional[str]:
+        """Closest product word if this (unknown) word is one edit away from it
+        (two for long words): a misheard product, not an ordinary word.
+        Words under 5 letters are never judged: too many ordinary short words
+        sit one letter from a short product name (عدد/عدس، شهر/شمر، مرة/ذرة)."""
+        if stems & self.known_words:
+            return None
+        best = None
+        for s in stems:
+            if len(s) < 5 or not _is_arabic(s):
+                continue
+            limit = 1 if len(s) <= 6 else 2
+            for p in self.product_words:
+                if abs(len(p) - len(s)) <= limit and s != p and _edit_distance(s, p) <= limit:
+                    if best is None or len(p) > len(best):
+                        best = p
+        return best
 
     def _head_span(self, words, stems, i, h_len, head) -> Tuple[List[int], List[str]]:
         """Head word(s) plus adjacent qualifiers: after the head for Arabic,

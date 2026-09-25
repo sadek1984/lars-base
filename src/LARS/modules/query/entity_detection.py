@@ -11,6 +11,7 @@ engine state (self._get_connection(), detection helpers, handlers) via self.
 from typing import List, Optional
 
 from modules.query.mappings import CATEGORY_EN
+from modules.query.text_norm import NormText, has_period_phrase
 
 
 class EntityDetectionMixin:
@@ -28,6 +29,21 @@ class EntityDetectionMixin:
         if not samples:
             return "1=1"
 
+        # Normal path: exact match on product names the EntityResolver loaded
+        # from the DB. The old LIKE fallbacks below also matched the category
+        # column ("نوع العينة" LIKE '%Dates%'), so the product 'Dates' pulled in
+        # the whole Dates category (Date Paste, Date Molasses, …). Only values
+        # that exist in the DB are emitted, so no user text reaches the SQL;
+        # none valid → '1=0' (no rows), never all data.
+        resolver = self._get_resolver()
+        if resolver is not None:
+            valid = [s for s in samples if s in resolver.product_tokens]
+            if not valid:
+                return "1=0"
+            values = ", ".join("'" + v.replace("'", "''") + "'" for v in valid)
+            return f'"اسم العينة" IN ({values})'
+
+        # Fallback only when the DB (and so the resolver) is unavailable.
         # Build reverse map: English canonical → list of Arabic query keys
         # e.g. 'Tomato' → ['طماطم', 'طماطم شيري']  (only the base match matters)
         from modules.query.mappings import SAMPLE_CORRECTIONS
@@ -146,86 +162,10 @@ class EntityDetectionMixin:
         return sorted(set(detected))
 
     def _detect_pesticide(self, query: str) -> Optional[str]:
-        """
-        كشف المبيد — Arabic-first, English fallback.
-
-        BUGFIX: the original version only checked whether the English
-        canonical name appeared literally in the query text — which
-        only ever matches Latin-script mentions embedded in an Arabic
-        sentence (e.g. "ابحث عن bifenthrin"). Pure-Arabic pesticide
-        names like "الإيميداكلوبرايد" never matched here even though
-        the exact same string correctly resolves via
-        IntentRouter._extract_pesticide()'s PESTICIDE_AR_TO_EN lookup.
-        Since this method feeds ctx['detected_pesticide'] — shared by
-        Tier 0, the semantic tier, and Tier 3 — that gap silently
-        broke every Arabic-only pesticide query that Tier 2 didn't
-        already classify into a pesticide-carrying intent.
-
-        Order:
-          1. Arabic key match against self.arabic_pesticide_map
-             (== PESTICIDE_AR_TO_EN), longest key first so e.g.
-             "الأيميداكلوبريد" doesn't get shadowed by a shorter
-             partial key.
-          2. English canonical name literal match (Latin-script
-             mentions mid-Arabic-sentence, e.g. "bifenthrin").
-          3. Common-name fallback list (English), for names that
-             might be missing from PESTICIDE_AR_TO_EN's keys.
-        """
-        # 1. Arabic — normalized match (handles hamza/ta-marbuta/ال-prefix
-        # spelling variants). Longest keys first to avoid short-prefix
-        # shadowing, e.g. matching "بابروفيزن" before a shorter substring
-        # of a different pesticide name.
-        from modules.query.mappings import (
-            PESTICIDE_AR_TO_EN_NORM,
-            PESTICIDE_AR_TO_EN_NORM_NOSPACE,
-            normalize_arabic_text,
-        )
-        norm_query = normalize_arabic_text(query)
-        for norm_key in sorted(PESTICIDE_AR_TO_EN_NORM.keys(), key=len, reverse=True):
-            if norm_key in norm_query:
-                return PESTICIDE_AR_TO_EN_NORM[norm_key]
-
-        # 1c. Fuzzy phonetic fallback — catches ASR letter insertions/drops
-        # that exact and space-insensitive matching above miss (see
-        # fuzzy_match_pesticide_ar's docstring for why this is necessary
-        # rather than another dictionary entry).
-        # Generic words ("المبيدات", "السموم الفطرية") are removed first: on their
-        # own they fuzzy-score >= 82 against 'اللامبدا' and used to inject
-        # lambda-cyhalothrin into questions that name no pesticide at all.
-        from modules.query.mappings import fuzzy_match_pesticide_ar, strip_generic_pesticide_words
-        _nospace_for_fuzzy = strip_generic_pesticide_words(norm_query).replace(" ", "")
-        fuzzy_result = fuzzy_match_pesticide_ar(_nospace_for_fuzzy) if _nospace_for_fuzzy else None
-        if fuzzy_result:
-            return fuzzy_result
-        # 1b. Arabic — space-insensitive fallback for compound transliterated
-        # names (e.g. "الأزوكسي ستروبين" vs dict's "الازوكسيستروبين").
-        # Scoped to pesticide names only — see mappings.py for rationale.
-        nospace_query = norm_query.replace(" ", "")
-        for norm_key in sorted(PESTICIDE_AR_TO_EN_NORM_NOSPACE.keys(), key=len, reverse=True):
-            if norm_key in nospace_query:
-                return PESTICIDE_AR_TO_EN_NORM_NOSPACE[norm_key]
-
-        # 2. English canonical values, literal substring match
-        query_lower = query.lower()
-        unique_en_pesticides = sorted(
-            set(self.arabic_pesticide_map.values()), key=len, reverse=True
-        )
-        for en_name in unique_en_pesticides:
-            if en_name.lower() in query_lower:
-                return en_name
-
-        # 3. Common-name fallback (in case PESTICIDE_AR_TO_EN is missing some)
-        pesticide_names_common = [
-            'bifenthrin', 'chlorpyrifos', 'imidacloprid', 'deltamethrin', 'cypermethrin',
-            'abamectin', 'acetamiprid', 'thiamethoxam', 'carbendazim', 'buprofezin',
-            'profenofos', 'metalaxyl', 'fipronil', 'emamectin', 'pyriproxyfen',
-            'azoxystrobin', 'difenoconazole', 'lambda-cyhalothrin', 'spinosad'
-        ]
-        for en_name in pesticide_names_common:
-            if en_name in query_lower:
-                return en_name
-
-        return None
+        """Pesticide named in the query — see mappings.detect_pesticide, shared
+        with IntentRouter._extract_pesticide so both tiers agree."""
+        from modules.query.mappings import detect_pesticide
+        return detect_pesticide(query)
 
     def _extract_context(self, query: str) -> dict:
         """
@@ -237,9 +177,15 @@ class EntityDetectionMixin:
         Pattern 1B / violations-threshold).
 
         Returns a context dict consumed by process() routing tiers.
+
+        query / query_normalized / query_lower are NormText: the original text,
+        but `kw in query` compares normalized forms (text_norm.norm), so every
+        tier matches "غير المطابقه", "اداء", "أيٍّ" the same way as the
+        canonical spelling.
         """
-        query_normalized = self._normalize_query(query)
-        query_lower = query_normalized.lower()
+        query = NormText(query)
+        query_normalized = NormText(self._normalize_query(query))
+        query_lower = NormText(query_normalized.lower())
 
         detected_samples_raw = self._detect_sample_types(query)
         detected_neighborhoods = self._detect_neighborhoods(query)
@@ -268,4 +214,7 @@ class EntityDetectionMixin:
             'detected_period_label': detected_period_label,
             'category_key': category_key,
             'resolution': self._resolve(query),
+            # A relative-period phrase ("خلال الأشهر الأخيرة") that did not parse:
+            # answering over all dates would silently broaden the question.
+            'period_unresolved': detected_period is None and has_period_phrase(query),
         }

@@ -27,6 +27,8 @@ Usage:
 
 from __future__ import annotations
 
+from modules.query.text_norm import COUNT_NOUNS, NormText, count_for_nouns, norm
+
 import re
 import logging
 from dataclasses import dataclass, field
@@ -35,14 +37,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from modules.query.mappings import (
     PESTICIDE_AR_TO_EN,
-    PESTICIDE_AR_TO_EN_NORM,
     SAMPLE_CORRECTIONS,
     SAMPLE_EN_TO_AR,
     NEIGHBORHOOD_CORRECTIONS,
     NEIGHBORHOOD_CORRECTIONS_NORM,
-    normalize_arabic_query,
     normalize_arabic_text,
-    PESTICIDE_AR_TO_EN_NORM_NOSPACE,
 )
 
 logger = logging.getLogger(__name__)
@@ -318,18 +317,10 @@ class IntentRouter:
         return detected
 
     def _extract_pesticide(self, query: str) -> Optional[str]:
-        """Detect a single pesticide (Arabic → English), normalized + space-insensitive match."""
-        norm_query = normalize_arabic_text(query)
-        for norm_key in sorted(PESTICIDE_AR_TO_EN_NORM.keys(), key=len, reverse=True):
-            if norm_key in norm_query:
-                return PESTICIDE_AR_TO_EN_NORM[norm_key]
-
-        nospace_query = norm_query.replace(" ", "")
-        for norm_key in sorted(PESTICIDE_AR_TO_EN_NORM_NOSPACE.keys(), key=len, reverse=True):
-            if norm_key in nospace_query:
-                return PESTICIDE_AR_TO_EN_NORM_NOSPACE[norm_key]
-
-        return None
+        """Detect a single pesticide (Arabic → English) with the same function the
+        ctx layer uses (mappings.detect_pesticide: exact, fuzzy, English)."""
+        from modules.query.mappings import detect_pesticide
+        return detect_pesticide(query)
 
     def _extract_category(self, query: str) -> Optional[str]:
         """Detect a food category (توابل, خضار, فواكه, etc.)."""
@@ -356,13 +347,12 @@ class IntentRouter:
         if "مبيدين" in query:
             return [2]
 
-        pesticide_kw = ["مبيد", "مبيدات", "متبقيات", "متبقي", "pesticide", "pesticides"]
-        if not any(kw in query for kw in pesticide_kw):
-            return None
-        numbers = re.findall(r"(\d+)", query)
-        if numbers:
-            return [int(n) for n in numbers if 1 <= int(n) <= 50]
-        return None
+        # Only numbers that quantify the pesticide noun ("٣ مبيدات", "مبيد واحد",
+        # "١ و ٢ مبيد"). Any digit in the question used to count, so "أعلى من
+        # ٥٠٪" became N=50 and "الحد الآمن الواحد" became N=1.
+        numbers = count_for_nouns(query, COUNT_NOUNS["pesticides"])
+        numbers = [n for n in numbers if 1 <= n <= 50]
+        return numbers or None
     # ────────────────────────────────────────────────────────────
     # INTENT CLASSIFICATION
     # ────────────────────────────────────────────────────────────
@@ -473,15 +463,20 @@ class IntentRouter:
     # ────────────────────────────────────────────────────────────
 
     def _normalize(self, query: str) -> str:
-        """Apply dialect synonyms + Arabic numeral conversion."""
+        """Dialect synonyms + Arabic-Indic digits, returned as NormText so every
+        keyword check below compares normalized forms (hamza, ة/ه, ى/ي,
+        tashkeel). Number WORDS are not replaced globally any more — that
+        turned "الواحد" in "الحد الآمن الواحد" into a pesticide count; counts
+        come from count_for_nouns()."""
         for dialect, standard in self.dialect_synonyms.items():
             query = query.replace(dialect, standard)
-        return normalize_arabic_query(query)
+        return NormText(query.translate(str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")))
 
     @staticmethod
     def _has_any(text: str, keywords: frozenset) -> bool:
-        """Check if text contains any keyword from the set."""
-        return any(kw in text for kw in keywords)
+        """Check if text contains any keyword from the set (normalized both sides)."""
+        t = norm(text)
+        return any(norm(kw) in t for kw in keywords)
 
     # ────────────────────────────────────────────────────────────
     # UTILITY: get SQL filter for category

@@ -19,6 +19,8 @@ import logging
 from typing import List, Optional, Tuple
 import pandas as pd
 
+from modules.query.messages import EU_MRL_COUNT_LABEL, EU_MRL_RATE_LABEL, eu_mrl_markdown
+
 
 
 class AdvancedHandlersMixin:
@@ -383,8 +385,8 @@ class AdvancedHandlersMixin:
         types_count = df["نوع_العينة"].nunique()
 
         response = f"🔍 **توزيع مبيد {pesticide} في {category_label}:**\n\n"
-        response += f"✅ وُجد في **{types_count}** نوع عينة | إجمالي الاكتشافات: **{total}** | المخالفات: **{violations}**\n\n"
-        response += df.to_markdown(index=False)
+        response += f"✅ وُجد في **{types_count}** نوع عينة | إجمالي الاكتشافات: **{total}** | {EU_MRL_COUNT_LABEL}: **{violations}**\n\n"
+        response += eu_mrl_markdown(df)
 
         return response, df
 
@@ -412,7 +414,7 @@ class AdvancedHandlersMixin:
         if df.empty:
             return f"⚠️ لم أجد بيانات لبلدية {municipality}", df
         response = f"🏛️ **المبيدات في {municipality}:**\n\n"
-        response += df.to_markdown(index=False)
+        response += eu_mrl_markdown(df)
         return response, df
 
     def _handle_municipality_comparison(
@@ -442,7 +444,7 @@ class AdvancedHandlersMixin:
             counts = df.groupby("municipality")["pesticide"].nunique().to_dict()
             response = f"📊 **المبيدات المكتشفة: {mun_a} مقابل {mun_b}:**\n\n"
             response += " | ".join(f"{m}: **{n}** مبيد" for m, n in counts.items()) + "\n\n"
-            response += df.to_markdown(index=False)
+            response += eu_mrl_markdown(df)
             return response, df
         sql = f"""
         SELECT
@@ -461,7 +463,7 @@ class AdvancedHandlersMixin:
         if df.empty:
             return f"⚠️ لم أجد بيانات للمقارنة بين {mun_a} و{mun_b}", df
         response = f"📊 **مقارنة {mun_a} و{mun_b}:**\n\n"
-        response += df.to_markdown(index=False)
+        response += eu_mrl_markdown(df)
         return response, df
 
     def _handle_municipality_breakdown(self, municipality: Optional[str]) -> Tuple[str, pd.DataFrame]:
@@ -557,12 +559,19 @@ class AdvancedHandlersMixin:
 
     def _handle_exceedance_multiplier(
         self, samples: List[str], multiplier: float,
-        category_key: Optional[str] = None,
+        category_key: Optional[str] = None, pesticide: Optional[str] = None,
     ) -> Tuple[str, pd.DataFrame]:
-        """Samples where concentration exceeded `multiplier`x the MRL. B018, B019."""
+        """Samples where concentration exceeded `multiplier`x the MRL, optionally
+        for one pesticide ("أوجد Buprofezin بأكثر من ضعفي الحد"). B016, B018, B019."""
+        from modules.query.mappings import get_pesticide_sql_filter_params
         sample_filter, params, label = self._category_or_samples_filter(category_key, samples)
         if sample_filter is None:
             return f"⚠️ فئة غير معروفة في البيانات: {category_key}", pd.DataFrame()
+        if pesticide:
+            pest_sql, pest_params = get_pesticide_sql_filter_params(pesticide)
+            sample_filter = f"{sample_filter} AND ({pest_sql})"
+            params = params + pest_params
+            label = f"{pesticide} — {label}"
         con = self._get_connection()
         sql = f"""
         SELECT "كود العينة" AS sample_code, "اسم العينة" AS sample_name,
@@ -627,8 +636,8 @@ class AdvancedHandlersMixin:
         if df.empty:
             return "⚠️ لم أجد بيانات كافية", df
         title = "لكل مبيد" if group_by == "pesticide" else "لكل منتج"
-        response = f"📊 **نسبة المخالفة {title} (عام):**\n\n*(العناصر ذات أقل من 5 اكتشافات مستبعدة)*\n\n"
-        response += df.to_markdown(index=False)
+        response = f"📊 **{EU_MRL_RATE_LABEL} {title} (عام):**\n\n*(العناصر ذات أقل من 5 اكتشافات مستبعدة)*\n\n"
+        response += eu_mrl_markdown(df)
         return response, df
 
     def _handle_zero_violations(self, entity_type: str) -> Tuple[str, pd.DataFrame]:
@@ -692,12 +701,13 @@ class AdvancedHandlersMixin:
         if df.empty:
             return "⚠️ لم أجد بيانات كافية", df
         what = label_map[entity]
-        by = 'حسب نسبة المخالفة' if metric == 'rate' else 'حسب عدد المخالفات'
-        title = f"أعلى {n} {what} {by}" if n else f"نسبة المخالفة لكل البلديات" if entity == "municipality" \
+        by = f'حسب {EU_MRL_RATE_LABEL}' if metric == 'rate' else f'حسب عدد النتائج التي {EU_MRL_COUNT_LABEL}'
+        title = f"أعلى {n} {what} {by}" if n else f"{EU_MRL_RATE_LABEL} لكل البلديات" if entity == "municipality" \
             else f"كل ال{what} {by}"
         response = f"📊 **{title}:**\n\n"
-        response += df.to_markdown(index=False)
-        response += (f"\n\n*نسبة المخالفة = العينات التي تجاوز فيها مبيد واحد على الأقل الحد ÷ عدد العينات. "
+        response += eu_mrl_markdown(df)
+        response += (f"\n\n*{EU_MRL_RATE_LABEL} = العينات التي تجاوز فيها مبيد واحد على الأقل الحد الأقصى الأوروبي ÷ عدد العينات "
+                     f"(مقارنة مرجعية، وليست الحكم الرسمي للمختبر). "
                      f"استُبعدت المجموعات التي لديها أقل من {min_samples} عينات.*")
         return response, df
 
@@ -1097,8 +1107,8 @@ class AdvancedHandlersMixin:
         if df.empty:
             return "⚠️ لم أجد بيانات كافية للتحليل الزمني", df
         label = self._TIME_PERIOD_LABELS.get(granularity, granularity)
-        response = f"📈 **العينات والمخالفات {label}:**\n\n"
-        response += df.to_markdown(index=False)
+        response = f"📈 **العينات و{EU_MRL_RATE_LABEL} {label}:**\n\n"
+        response += eu_mrl_markdown(df)
         return response, df
 
     def _handle_time_series_extreme(self, granularity: str) -> Tuple[str, pd.DataFrame]:
@@ -1108,9 +1118,9 @@ class AdvancedHandlersMixin:
             return text, df
         top = df.loc[df["violation_rate_pct"].idxmax()]
         response = (
-            f"📈 **أعلى فترة من حيث نسبة المخالفة:**\n\n"
-            f"الفترة: **{top['period']}** | نسبة المخالفة: **{top['violation_rate_pct']}%** "
-            f"| العينات: **{int(top['sample_count'])}** | العينات المخالفة: **{int(top['violating_samples'])}**"
+            f"📈 **أعلى فترة من حيث {EU_MRL_RATE_LABEL}:**\n\n"
+            f"الفترة: **{top['period']}** | النسبة: **{top['violation_rate_pct']}%** "
+            f"| العينات: **{int(top['sample_count'])}** | عينات {EU_MRL_COUNT_LABEL}: **{int(top['violating_samples'])}**"
         )
         return response, df
 
@@ -1734,10 +1744,10 @@ class AdvancedHandlersMixin:
             con.close()
             if df.empty:
                 return f"⚠️ لم أجد مبيدات مكتشفة في {category_label}", df
-            response = f"📊 **المبيدات والسموم الفطرية في {category_label} — فوق وتحت الحد:**\n\n"
-            response += (f"✅ {len(df)} مبيد/سم | 🔴 اكتشافات فوق الحد: **{int(df['فوق_الحد'].sum())}**"
-                         f" | 🟢 تحت الحد: **{int(df['تحت_الحد'].sum())}**\n\n")
-            response += df.to_markdown(index=False)
+            response = f"📊 **المبيدات والسموم الفطرية في {category_label} — مقارنة بالحد الأقصى الأوروبي:**\n\n"
+            response += (f"✅ {len(df)} مبيد/سم | 🔴 نتائج {EU_MRL_COUNT_LABEL}: **{int(df['فوق_الحد'].sum())}**"
+                         f" | 🟢 ضمن الحد الأقصى الأوروبي: **{int(df['تحت_الحد'].sum())}**\n\n")
+            response += eu_mrl_markdown(df)
             return response, df
 
         sql = f"""
@@ -1775,10 +1785,10 @@ class AdvancedHandlersMixin:
         total_above = int(df["فوق_الحد"].sum())
         total_below = int(df["تحت_الحد"].sum())
 
-        response = f"📊 **ملخص {category_label} — فوق وتحت الحد المسموح:**\n\n"
+        response = f"📊 **ملخص {category_label} — مقارنة بالحد الأقصى الأوروبي (EU MRL):**\n\n"
         response += f"✅ إجمالي العينات: **{total_samples}**\n"
-        response += f"🔴 فوق الحد: **{total_above}**\n"
-        response += f"🟢 تحت الحد: **{total_below}**\n\n"
-        response += df.to_markdown(index=False)
+        response += f"🔴 {EU_MRL_COUNT_LABEL}: **{total_above}**\n"
+        response += f"🟢 ضمن الحد الأقصى الأوروبي: **{total_below}**\n\n"
+        response += eu_mrl_markdown(df)
 
         return response, df

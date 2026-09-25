@@ -15,6 +15,7 @@ from typing import List, Optional, Tuple
 import pandas as pd
 
 from modules.query.mappings import get_pesticide_sql_filter_params
+from modules.query.text_norm import norm
 
 # Intent router (optional - graceful fallback, same guard as core_query_engine)
 try:
@@ -199,7 +200,11 @@ class RoutingMixin:
                 return self._handle_n_pesticides(entities.n_pesticides[-1], entities.samples, date_filter=date_filter)
             
             # ── Pesticide queries ──
-            if intent == Intent.FIND_PESTICIDE_IN_SAMPLE and entities.pesticide and entities.samples:
+            # "… بأكثر من ضعفي الحد" asks for results above N x MRL: the keyword
+            # tier's multiplier handler answers that (with the pesticide filter).
+            is_multiplier_question = any(w in (entities.raw_query or "") for w in ("ضعف", "أضعاف", "اضعاف"))
+            if (intent == Intent.FIND_PESTICIDE_IN_SAMPLE and entities.pesticide and entities.samples
+                    and not is_multiplier_question):
                 if entities.wants_limit_breakdown:
                     return self._handle_sample_pesticide_limit(
                         entities.samples, entities.pesticide, 
@@ -210,7 +215,7 @@ class RoutingMixin:
             if intent == Intent.FIND_PESTICIDE_IN_CATEGORY and entities.pesticide and entities.category:
                 # "ما هي الخضروات التي…" / "في أي التوابل…" ask WHICH products → one row per product
                 which_products = entities.wants_types or bool(
-                    re.search(r"(^|\s)(في\s+)?[أا]ي\s", entities.raw_query or ""))
+                    re.search(r"(^|\s)(في\s+)?اي\s", norm(entities.raw_query or "")))
                 return self._handle_pesticide_in_category(entities.pesticide, entities.category,
                                                           date_filter=date_filter,
                                                           group_by_product=which_products)
