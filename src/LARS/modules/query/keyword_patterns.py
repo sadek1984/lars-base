@@ -379,7 +379,10 @@ class KeywordPatternsMixin:
         if resolution is not None and (resolution.mentions_municipality or resolution.municipalities):
             muns = resolution.municipalities
             wants_breakdown = 'أنواع' in query or 'مفصلة' in query or 'حسب نوع' in query
-            is_compare = 'قارن' in query or 'مقابل' in query
+            # Two named municipalities ("مين أعلى بلدية، شرق بريدة ولا غرب بريدة")
+            # are a comparison even without "قارن"; answering for the first one
+            # only would silently narrow the question.
+            is_compare = 'قارن' in query or 'مقابل' in query or len(muns) >= 2
             if is_compare and len(muns) >= 2:
                 metric = 'pesticides' if 'المبيدات' in query or 'مبيدات' in query else 'violation_rate'
                 return self._handle_municipality_comparison(muns[0], muns[1], metric=metric)

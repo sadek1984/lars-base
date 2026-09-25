@@ -90,7 +90,7 @@ def tokens(text: str) -> List[str]:
 # "match" word flips it to non-compliant: "ما طابقت", "غير المطابقه", "لم تطابق".
 _NEGATORS = {"غير", "الغير", "ما", "لم", "لا"}
 _MATCH_STEMS = ("مطابق", "طابق", "تطابق")
-_NON_COMPLIANT_STEMS = ("راسب", "رسب", "فاشل", "فشل", "مرفوض", "رواسب")
+_NON_COMPLIANT_STEMS = ("راسب", "رسب", "فاشل", "فشل", "مرفوض")   # not "رواسب" (= residues)
 _COMPLIANT_STEMS = ("ناجح", "نجح", "مقبول")
 
 
@@ -133,6 +133,7 @@ ALL_COUNT_NOUNS = set().union(*COUNT_NOUNS.values())
 
 
 _CONNECTORS = {"و", "او", "or", "and", "-", "،", ","}
+_EMPHATIC = {"ولو", "لو", "حتي"}
 
 
 def number_value(word: str) -> Optional[int]:
@@ -160,6 +161,8 @@ def count_for_nouns(text: str, nouns: Iterable[str] = ALL_COUNT_NOUNS) -> List[i
     used: set = set()          # a number word quantifies one noun only
     for i, noun in enumerate(bare):
         if noun not in nouns and toks[i] not in nouns:
+            continue
+        if i and toks[i - 1] in _EMPHATIC:      # "ولو عينة واحدة" = "even one", not N=1
             continue
         # number(s) before the noun, allowing "N و M" / "N أو M" chains
         j, before = i - 1, []

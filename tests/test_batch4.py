@@ -201,3 +201,43 @@ def test_B016_multiplier_applies_to_the_named_pesticide(engine, bank, con):
 def test_C002_number_word_counted_once():
     from modules.query.text_norm import count_for_nouns
     assert count_for_nouns("ما عدد العينات التي تحتوي على مبيد واحد و٢ مبيد كل على حده؟") == [1, 2]
+
+
+# ── Batch 4.1 ────────────────────────────────────────────────────────────────
+
+def test_rawasib_means_residues_not_a_verdict(engine):
+    from modules.query.text_norm import compliance_intent
+    q = "ما هي رواسب المبيدات في الطماطم"
+    assert compliance_intent(q) is None
+    text = engine.process(q)[0]
+    assert "Non-Compliant samples" not in text and "غير مطابقة" not in text
+
+
+@pytest.mark.parametrize("q, month", [
+    ("كم عينة مخالفة في مارس", 3),
+    ("خلال شهر مارس", 3),
+    ("العينات في شهر أبريل", 4),
+])
+def test_absolute_month_applies_and_is_not_refused(engine, q, month):
+    ctx = engine._extract_context(q)
+    assert f"= {month}" in (ctx["detected_period"] or "")
+    assert ctx["period_unresolved"] is False
+    assert "الفترة الزمنية" not in engine.process(q)[0]
+
+
+def test_even_one_sample_sets_no_count(engine):
+    from modules.query.text_norm import count_for_nouns
+    q = "هل توجد ولو عينة واحدة مخالفة"
+    assert count_for_nouns(q) == []
+    assert engine.router.analyze(q)[1].n_pesticides is None
+    assert engine._top_n(q) is None
+
+
+@pytest.mark.parametrize("q", [
+    "مين أعلى بلدية في نسبة المخالفة، شرق بريدة ولا غرب بريدة؟",
+    "أي بلدية أعلى في نسبة المخالفة: بلدية شرق بريدة أو بلدية غرب بريدة؟",
+])
+def test_two_municipalities_without_qaarin_are_compared(engine, bank, q):
+    _, original = engine.process(bank["D012"])[:2]
+    _, df = engine.process(q)[:2]
+    assert df.to_csv(index=False) == original.to_csv(index=False)
