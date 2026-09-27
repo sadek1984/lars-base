@@ -5,12 +5,12 @@ Nothing is guessed: an unknown value is a refusal, never a dropped filter.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Dict, List, Optional, Tuple
 
 from modules.query.mappings import PESTICIDE_AR_TO_EN_NORM, normalize_neighborhood
-from modules.query.text_norm import norm
+from modules.query.text_norm import _strip_clitics, has_period_phrase, norm, tokens
 from modules.semantic.catalog import Catalog
 from modules.semantic.query_spec import (
     ANALYTE_METRICS, RATE_METRICS, GroupBy, Metric, QuerySpec, Scope,
@@ -35,6 +35,8 @@ class ResolvedSpec:
     pesticide_raw: Tuple[str, ...] = ()           # their stored spellings (SQL IN list)
     period: Optional[Tuple[date, date]] = None
     terms: Dict[str, List[str]] = field(default_factory=dict)  # filter -> words as asked
+    highlight: Optional[str] = None               # "X compared with all": the one value of the grouped dimension
+    added_from_question: Tuple[str, ...] = ()     # categories the coverage check added
 
     @property
     def mentions_category(self) -> bool:
@@ -106,7 +108,7 @@ def validate(spec: QuerySpec, catalog: Catalog, resolver) -> ResolvedSpec:
         raise SpecRejected("⚠️ لا يمكن حساب نسبة داخل العينات غير المطابقة فقط.")
     if spec.metric in ANALYTE_METRICS and spec.filters.pesticide:
         raise SpecRejected("⚠️ قائمة المبيدات لا تُصفّى بمبيد محدد؛ اسأل عن عدد العينات التي ظهر فيها المبيد.")
-    if spec.metric in ANALYTE_METRICS and spec.group_by is not None:
+    if spec.metric in (Metric.top_pesticides, Metric.never_detected_list) and spec.group_by is not None:
         raise SpecRejected("⚠️ ترتيب المبيدات حسب مجموعة (مثل كل بلدية) غير مدعوم حالياً.")
 
     f = spec.filters
@@ -152,10 +154,83 @@ def validate(spec: QuerySpec, catalog: Catalog, resolver) -> ResolvedSpec:
     if period and (period[1] < catalog.min_date or period[0] > catalog.max_date):
         raise SpecRejected(f"⚠️ الفترة المطلوبة خارج نطاق بيانات المختبر "
                            f"({catalog.min_date} إلى {catalog.max_date}).")
+    # Grouping by a dimension filtered to ONE value ("spices, by category") is
+    # a comparison with everything else ("spices vs the overall rate"): drop
+    # that filter so every group and the distinct total are shown, and put
+    # the asked value first.
+    highlight = None
+    dims = {GroupBy.category: cats, GroupBy.product: prods, GroupBy.municipality: muns,
+            GroupBy.neighborhood: hoods}
+    if spec.group_by in dims and len(dims[spec.group_by]) == 1:
+        if spec.metric in ANALYTE_METRICS:
+            # "pesticides in cardamom, by product": one group → a plain list
+            spec = spec.model_copy(update={"group_by": None})
+        else:
+            highlight = dims[spec.group_by][0]
+            dims[spec.group_by].clear()
     raw = tuple(r for p in pests for r in catalog.analytes.raw_names(p))
     return ResolvedSpec(
         spec=spec, categories=tuple(sorted(cats)), products=tuple(sorted(prods)),
         municipalities=tuple(sorted(muns)), neighborhoods=tuple(sorted(hoods)),
         pesticides=tuple(pests), pesticide_raw=tuple(sorted(raw)), period=period,
-        terms={k: list(v) for k, v in f.model_dump().items() if v},
+        terms={k: list(v) for k, v in f.model_dump().items() if v}, highlight=highlight,
     )
+
+
+# ── Coverage: the spec must not drop what the question names ─────────────────
+
+_MONTHS = ["يناير", "فبراير", "مارس", "ابريل", "مايو", "يونيو", "يوليو", "اغسطس",
+           "سبتمبر", "اكتوبر", "نوفمبر", "ديسمبر"]
+
+
+def _question_categories(question: str, catalog: Catalog) -> set:
+    words = [_strip_clitics(w) for w in tokens(question)]
+    found, used = set(), set()
+    for n in (2, 1):                      # 'خضار ورقية' is Leafy Greens, not also Vegetables
+        for i in range(len(words) - n + 1):
+            span = set(range(i, i + n))
+            hit = None if span & used else catalog.category_terms.get(category_key(" ".join(words[i:i + n])))
+            if hit:
+                found.update(hit)
+                used |= span
+    return found
+
+
+def check_coverage(question: str, r: ResolvedSpec, catalog: Catalog, resolver) -> ResolvedSpec:
+    """Refuse a spec that silently drops a category, product, municipality,
+    pesticide or period the question names — the LLM must never broaden.
+    One repair: a spec with no category and no product at all gets the
+    category words the question names (from the reviewed table); that can
+    only narrow the answer. Returns the (possibly repaired) spec."""
+    g = r.spec.group_by
+    in_scope_cats = set(r.categories) | ({r.highlight} if g is GroupBy.category and r.highlight else set())
+    if g is not GroupBy.category:
+        missing = _question_categories(question, catalog) - in_scope_cats
+        if missing and not r.categories and not r.products and r.highlight is None:
+            r = replace(r, categories=tuple(sorted(missing)), added_from_question=tuple(sorted(missing)))
+            in_scope_cats = set(r.categories)
+        elif missing and not (set(r.products) and all(
+                set(catalog.product_categories.get(p, ())) & missing for p in r.products)):
+            raise SpecRejected(f"coverage: category {sorted(missing)} dropped")
+    res = resolver.resolve(question)
+    kept_products = set(r.products) | ({r.highlight} if g is GroupBy.product and r.highlight else set())
+    named = [p for p in res.products
+             if not set(catalog.product_categories.get(p, ())) & in_scope_cats]   # 'المكسرات' → Mixed Nuts
+    if named and g is not GroupBy.product and not set(named) & kept_products:
+        raise SpecRejected(f"coverage: product {named} dropped")
+    if res.municipalities and g is not GroupBy.municipality and not set(res.municipalities) <= (
+            set(r.municipalities) | ({r.highlight} if r.highlight else set())):
+        raise SpecRejected(f"coverage: municipality {res.municipalities} dropped")
+    if r.spec.metric not in ANALYTE_METRICS:
+        from modules.query.mappings import detect_pesticide
+        named_p = detect_pesticide(question)
+        if named_p:
+            canon = catalog.analytes.raw_to_canonical.get(named_p) or named_p.lower()
+            if canon not in r.pesticides:
+                raise SpecRejected(f"coverage: pesticide {named_p} dropped")
+    months = {m for m in _MONTHS if m in norm(question).replace("أ", "ا").replace("إ", "ا")}
+    # "من شهر إلى آخر" with group_by month is a trend, not a period.
+    phrase = has_period_phrase(question) and g is not GroupBy.month
+    if (phrase or months) and r.period is None:
+        raise SpecRejected("coverage: period dropped")
+    return r

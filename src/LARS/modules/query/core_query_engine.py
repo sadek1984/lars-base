@@ -65,6 +65,7 @@ from modules.query.messages import (CANNOT_COMPUTE_RATE_MESSAGE, EU_MRL_COUNT_LA
                                     CATEGORY_UNSUPPORTED_MESSAGE, MULTI_MONTH_MESSAGE,
                                     POLITE_ERROR_MESSAGE, eu_mrl_markdown)
 from modules.query.text_norm import compliance_intent
+from modules.semantic.fallback import SEMANTIC_ELIGIBLE, init_semantic
 
 
 class DatabaseUnavailableError(RuntimeError):
@@ -118,6 +119,11 @@ class CoreQueryEngine(
         # start of every process() call — no state carried between questions).
         self._handlers_called: List[Tuple[str, tuple, dict]] = []
         self._record_handler_calls()
+        # Semantic fallback (env LARS_SEMANTIC_MODE: off | shadow | live). It runs
+        # only after the handlers refuse; in "off" nothing is built at all.
+        self._refusal: Optional[str] = None
+        self.last_source = "handler"
+        self.semantic_mode, self._semantic = init_semantic(self.db_path)
         self._resolution_cache: Tuple[Optional[str], Any] = (None, None)
         
         # Initialize semantic pattern recognizer (optional)
@@ -274,6 +280,7 @@ class CoreQueryEngine(
                 "البيانات بدلاً منها. جرّب صيغة مثل «آخر ٣ أشهر» أو «الشهر الماضي» أو اسم الشهر.")
 
     def _unresolved_municipality_message(self) -> str:
+        self._refusal = "unresolved_municipality"
         resolver = self._get_resolver()
         known = "، ".join(resolver.db_municipalities) if resolver else ""
         return f"⚠️ لم أتعرف على البلدية المذكورة في السؤال. البلديات المتاحة في البيانات: {known}"
@@ -477,6 +484,8 @@ class CoreQueryEngine(
         passes the percentage sanity guard.
         """
         self._handlers_called = []
+        self._refusal = None          # why the handlers refused, if they did (per call)
+        self.last_source = "handler"
         try:
             response_text, df = self._process_unguarded(query)
         except DatabaseUnavailableError as db_err:
@@ -485,7 +494,26 @@ class CoreQueryEngine(
         except Exception:
             logging.exception(f"Query failed: {query!r}")
             return POLITE_ERROR_MESSAGE, None
-        return self._guard_percentages(response_text, df)
+        response_text, df = self._guard_percentages(response_text, df)
+        if self._semantic is not None and self._refusal in SEMANTIC_ELIGIBLE:
+            return self._semantic_fallback(query, response_text, df)
+        return response_text, df
+
+    def _semantic_fallback(self, query: str, response_text: str, df):
+        """Handlers refused (not understood / unresolved filter / category).
+        shadow: log the semantic run only; live: serve it if it succeeds.
+        Any failure → the original refusal. Never raises."""
+        try:
+            if self.semantic_mode == "shadow":
+                self._semantic.submit_shadow(query, response_text, self._refusal)
+                return response_text, df
+            ans = self._semantic.answer(query, response_text, self._refusal, serve=True)
+            if ans is not None:
+                self.last_source = "semantic"
+                return ans.text, ans.df
+        except Exception:
+            logging.exception(f"Semantic fallback failed: {query!r}")
+        return response_text, df
 
     # Rate/percentage columns must lie in [0, 100]. Percent-of-MRL and
     # exceedance columns are excluded: 250% of the MRL is a legitimate value.
@@ -619,6 +647,7 @@ class CoreQueryEngine(
         # answer. See core_query_engine.py's _check_out_of_scope() below.
         oos_result = self._check_out_of_scope(query, query_lower)
         if oos_result is not None:
+            self._refusal = "out_of_scope"
             return oos_result
 
         # ── Unresolved entity gate: a product was named but matches nothing in
@@ -627,20 +656,24 @@ class CoreQueryEngine(
         resolution = ctx.get('resolution')
         if (resolution is not None and resolution.product_terms_unresolved
                 and not resolution.products and not resolution.categories):
+            self._refusal = "unresolved_product"
             return self._unresolved_product_message(
                 resolution.product_terms_unresolved, getattr(resolution, "product_suggestions", {})), None
 
         # Same for a relative period that was named but not understood:
         # never drop it and answer over the whole dataset.
         if ctx.get('period_unresolved'):
+            self._refusal = "unresolved_period"
             return self._unresolved_period_message(), None
         # Two or more months named: the month filter would keep only the first.
         if ctx.get('multi_month'):
+            self._refusal = "multi_month"
             return MULTI_MONTH_MESSAGE, None
         # "المكسرات" read as the product 'Mixed Nuts' (the category word itself):
         # refuse — the only product came from the category word.
         products, categories = self._products_and_categories(ctx)
         if categories and resolution is not None and resolution.products and not products:
+            self._refusal = "category"
             return CATEGORY_UNSUPPORTED_MESSAGE, None
         category_question = bool(categories) and not products
 
@@ -717,12 +750,14 @@ class CoreQueryEngine(
 
         # ── Fallback: nothing matched ───────────────────────────────────────────
         if result is None:
+            self._refusal = "not_understood"
             result = (self._handle_unknown_query(query), None)
 
         response_text, df = result
         # Category questions are answered only by handlers verified for them;
         # any other handler (which may ignore the category) → honest refusal.
         if category_question and not self._category_answer_verified():
+            self._refusal = "category"
             return CATEGORY_UNSUPPORTED_MESSAGE, None
         response_text, df = self._guard_empty_scope(ctx, response_text, df)
 

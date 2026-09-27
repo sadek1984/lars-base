@@ -150,6 +150,26 @@ def _analyte_sql(r: ResolvedSpec, catalog: Catalog) -> Tuple[str, list]:
           FROM everywhere WHERE canonical NOT IN (SELECT canonical FROM d)
           GROUP BY 1, 2 ORDER BY pesticide ASC LIMIT ?"""
         return sql, v_params + w_params + [MAX_ROWS]
+    if r.spec.group_by is not None:           # pesticide_list by group: which analytes, where
+        grp = GROUP_EXPR[r.spec.group_by]
+        sql = f"""WITH amap(raw, canonical, cls) AS (VALUES {values}),
+          d AS (SELECT {grp} AS grp, t."كود العينة" AS code, a.canonical, a.cls,
+                       COALESCE(t.is_above_limit, 0) AS above
+                FROM chemistry_tidy t JOIN amap a ON t.pesticide_name = a.raw
+                WHERE t.is_detected = 1 AND {where}),
+          tot AS (SELECT {grp} AS grp, COUNT(DISTINCT "كود العينة") AS samples
+                  FROM chemistry_tidy WHERE {where} GROUP BY 1),
+          g AS (SELECT grp, COUNT(DISTINCT code) AS samples_with_detections FROM d GROUP BY grp),
+          p AS (SELECT grp, canonical AS pesticide, cls AS analyte_class, COUNT(DISTINCT code) AS samples_detected,
+                       COUNT(DISTINCT CASE WHEN above = 1 THEN code END) AS samples_above_limit
+                FROM d GROUP BY 1, 2, 3)
+          SELECT p.grp, tot.samples, g.samples_with_detections, p.pesticide, p.analyte_class,
+                 p.samples_detected, p.samples_above_limit
+          FROM p JOIN g ON p.grp = g.grp JOIN tot ON p.grp = tot.grp
+          WHERE p.grp IS NOT NULL AND p.grp != ''
+          ORDER BY g.samples_with_detections DESC, p.grp ASC, p.samples_detected DESC, p.pesticide ASC
+          LIMIT ?"""
+        return sql, v_params + w_params + w_params + [MAX_ROWS * 10]
     limit = r.spec.top_n if m is Metric.top_pesticides else MAX_ROWS
     direction = "ASC" if (m is Metric.top_pesticides and r.spec.sort is Sort.asc) else "DESC"
     sql = f"""{head}

@@ -146,3 +146,13 @@ def test_spec_round_trips_json():
     s = QuerySpec(metric="noncompliance_rate", filters={"category": ["التوابل"]}, group_by="category",
                   period={"type": "relative", "n": 3, "unit": "month"})
     assert QuerySpec.model_validate_json(s.model_dump_json()) == s
+
+
+def test_month_range(con):
+    p = Period(type="range", from_month=1, to_month=3)
+    assert p.bounds(date(2026, 5, 17)) == (date(2026, 1, 1), date(2026, 3, 31))
+    assert count_between(con, *p.bounds(date(2026, 5, 17))) == 1111
+    for bad in ({"type": "range", "from_month": 3, "to_month": 1}, {"type": "range", "year": 2026},
+                {"type": "range", "from_month": 1, "to_month": 3, "start": "2026-01-01"}):
+        with pytest.raises(ValidationError):
+            Period.model_validate(bad)

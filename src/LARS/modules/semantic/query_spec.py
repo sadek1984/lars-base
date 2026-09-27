@@ -42,7 +42,7 @@ class PeriodType(str, Enum):
     none = "none"
     relative = "relative"              # "آخر 3 شهور": n units back from MAX(test_date)
     absolute_month = "absolute_month"  # "في مارس"
-    range = "range"                    # "من يناير إلى مارس", inclusive
+    range = "range"                    # "من يناير إلى مارس": from_month..to_month, or start..end dates
 
 
 class PeriodUnit(str, Enum):
@@ -71,25 +71,35 @@ class Filters(_Strict):
 
 class Period(_Strict):
     type: PeriodType = PeriodType.none
-    n: Optional[int] = Field(default=None, ge=1, le=36)
-    unit: Optional[PeriodUnit] = None
-    month: Optional[int] = Field(default=None, ge=1, le=12)
-    year: Optional[int] = Field(default=None, ge=2000, le=2100)
-    start: Optional[date] = None
-    end: Optional[date] = None
+    n: Optional[int] = Field(default=None, ge=1, le=36, description="REQUIRED for relative: how many units back")
+    unit: Optional[PeriodUnit] = Field(default=None, description="REQUIRED for relative")
+    month: Optional[int] = Field(default=None, ge=1, le=12, description="REQUIRED for absolute_month: 1-12")
+    year: Optional[int] = Field(default=None, ge=2000, le=2100, description="only if the question names a year")
+    from_month: Optional[int] = Field(default=None, ge=1, le=12, description="REQUIRED for range: first month 1-12")
+    to_month: Optional[int] = Field(default=None, ge=1, le=12, description="REQUIRED for range: last month 1-12")
+    start: Optional[date] = Field(default=None, description="range by exact dates (only if days are named)")
+    end: Optional[date] = Field(default=None, description="range by exact dates (only if days are named)")
 
     @model_validator(mode="after")
     def _fields_match_type(self):
-        needed = {PeriodType.none: set(), PeriodType.relative: {"n", "unit"},
-                  PeriodType.absolute_month: {"month"}, PeriodType.range: {"start", "end"}}[self.type]
-        allowed = needed | ({"year"} if self.type is PeriodType.absolute_month else set())
-        given = {k for k in ("n", "unit", "month", "year", "start", "end") if getattr(self, k) is not None}
+        given = {k for k in ("n", "unit", "month", "year", "from_month", "to_month", "start", "end")
+                 if getattr(self, k) is not None}
+        if self.type is PeriodType.range:
+            options = [({"from_month", "to_month"}, {"year"}), ({"start", "end"}, set())]
+            needed, optional = next(((n, o) for n, o in options if n <= given), options[0])
+        else:
+            needed = {PeriodType.none: set(), PeriodType.relative: {"n", "unit"},
+                      PeriodType.absolute_month: {"month"}}[self.type]
+            optional = {"year"} if self.type is PeriodType.absolute_month else set()
         if needed - given:
             raise ValueError(f"period '{self.type.value}' needs {sorted(needed - given)}")
-        if given - allowed:
-            raise ValueError(f"period '{self.type.value}' does not take {sorted(given - allowed)}")
-        if self.type is PeriodType.range and self.start > self.end:
-            raise ValueError("period start is after end")
+        if given - needed - optional:
+            raise ValueError(f"period '{self.type.value}' does not take {sorted(given - needed - optional)}")
+        if self.type is PeriodType.range:
+            if self.start is not None and self.start > self.end:
+                raise ValueError("period start is after end")
+            if self.from_month is not None and self.from_month > self.to_month:
+                raise ValueError("from_month is after to_month")
         return self
 
     def bounds(self, max_date: date) -> Optional[Tuple[date, date]]:
@@ -98,12 +108,18 @@ class Period(_Strict):
         if self.type is PeriodType.none:
             return None
         if self.type is PeriodType.range:
-            return self.start, self.end
+            if self.start is not None:
+                return self.start, self.end
+            year = self.year or max_date.year
+            return date(year, self.from_month, 1), _month_end(year, self.to_month)
         if self.type is PeriodType.absolute_month:
             year = self.year or max_date.year
-            nxt = date(year + (self.month == 12), self.month % 12 + 1, 1)
-            return date(year, self.month, 1), nxt - timedelta(days=1)
+            return date(year, self.month, 1), _month_end(year, self.month)
         return _minus(max_date, self.n, self.unit), max_date
+
+
+def _month_end(year: int, month: int) -> date:
+    return date(year + (month == 12), month % 12 + 1, 1) - timedelta(days=1)
 
 
 def _minus(d: date, n: int, unit: PeriodUnit) -> date:
@@ -128,7 +144,7 @@ class QuerySpec(_Strict):
     sort: Sort = Sort.desc
     mrl_multiple: Optional[float] = Field(default=None, ge=1, le=1000)  # "أكثر من ضعف الحد": 2
     unsupported: bool = False
-    reason: Optional[str] = None
+    reason: Optional[str] = Field(default=None, description="REQUIRED when unsupported: short Arabic reason")
 
     @model_validator(mode="after")
     def _unsupported_needs_reason(self):

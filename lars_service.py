@@ -55,7 +55,7 @@ async def query_lars(request: QueryRequest):
                 if df.empty:
                     df = get_top(level=level, n=params["top_n"], db_path=db_path)
                 answer = to_voice_summary(df, level)
-                return {"success": True, "answer": answer}
+                return {"success": True, "answer": answer, "source": "handler"}
         except Exception as e:
             logger.warning(f"Priority voice shortcut failed, falling back: {e}")
 
@@ -74,7 +74,10 @@ async def query_lars(request: QueryRequest):
             answer = str(result[0])
         else:
             answer = str(result)
-        return {"success": True, "answer": answer}
+        # "semantic" when the semantic fallback (LARS_SEMANTIC_MODE=live) answered
+        # a question the handlers refused; "handler" otherwise.
+        source = getattr(engine, "last_source", "handler")
+        return {"success": True, "answer": answer, "source": source}
     except Exception as e:
         logger.error(f"Query error: {e}")
         return {"success": False, "answer": f"Error: {e}"}

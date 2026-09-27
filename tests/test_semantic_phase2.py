@@ -329,3 +329,86 @@ def test_mrl_multiple_wording(ask):
 def test_never_detected_wording(ask):
     a = ask({"metric": "never_detected_list", "filters": {"category": ["الفواكه"]}})
     assert "من بين المركّبات التي ظهرت في البيانات" in a.text.split("\n")[0]
+
+
+# ── Phase 3 additions: grouped detections, comparison, coverage ─────────────
+
+def test_A025_nut_products_with_detections(ask, con, amap):
+    a = ask({"metric": "pesticide_list", "filters": {"category": ["المكسرات"]}, "group_by": "product"})
+    exp = {}
+    for p, code, raw in con.execute(f"""SELECT "اسم العينة", {CODE}, pesticide_name FROM chemistry_tidy
+            WHERE "نوع العينة" = 'Nuts' AND is_detected = 1""").fetchall():
+        if amap.get(raw):
+            exp.setdefault(p, set()).add(code)
+    per_product = a.df.drop_duplicates("product")
+    assert dict(zip(per_product["product"], per_product["samples_with_detections"])) == {p: len(c) for p, c in exp.items()}
+    assert "المركّبات" in a.text or "مركّبات" in a.text
+
+
+def test_single_value_group_is_a_comparison_with_everything(ask):
+    a = ask({"metric": "noncompliance_rate", "filters": {"category": ["التوابل"]}, "group_by": "category"})
+    assert row(a.df, "category", "Spices").rate_pct == 37.8 and row(a.df, "category", "الإجمالي").rate_pct == 12.9
+    assert a.text.split("\n")[1].startswith("• التوابل") and "مقارنةً بجميع العينات" in a.text
+    d = ask({"metric": "noncompliant_count", "filters": {"category": ["التوابل"]}, "group_by": "category"})
+    assert row(d.df, "category", "Spices").share_pct == 75.4 and "75.4% من الإجمالي" in d.text
+
+
+@pytest.fixture(scope="module")
+def ask_q():
+    from modules.query.entity_resolver import EntityResolver
+    from modules.semantic.answer import answer_spec
+    from modules.semantic.catalog import build_catalog
+    catalog = build_catalog(str(DB_PATH))
+    with duckdb.connect(str(DB_PATH), read_only=True) as c:
+        resolver = EntityResolver(c)
+    return lambda q, spec: answer_spec(QuerySpec.model_validate(spec), catalog, resolver, str(DB_PATH), question=q)
+
+
+@pytest.mark.parametrize("q, spec", [
+    ("وش أكثر عشرة مبيدات تتكرر في البهارات؟", {"metric": "top_pesticides", "top_n": 10,
+                                                 "filters": {"product": ["الطماطم"]}}),
+    ("كم عينة طماطم غير مطابقة؟", {"metric": "noncompliant_count"}),
+    ("كم عينة غير مطابقة في بلدية الرس؟", {"metric": "noncompliant_count"}),
+    ("كم عينة فيها الكاربندازيم؟", {"metric": "sample_count"}),
+    ("كم عينة في آخر 3 أشهر؟", {"metric": "sample_count"}),
+    ("كم عينة في مارس؟", {"metric": "sample_count"}),
+])
+def test_coverage_refuses_a_dropped_filter(ask_q, q, spec):
+    a = ask_q(q, spec)
+    assert not a.ok and "coverage" in a.text
+
+
+@pytest.mark.parametrize("q, spec", [
+    ("المبيدات في الخضار الورقية", {"metric": "pesticide_list", "filters": {"category": ["الورقيات"]}}),
+    ("كم عدد العينات غير المطابقة في المكسرات", {"metric": "noncompliant_count", "filters": {"category": ["المكسرات"]}}),
+    ("كيف تطوّر وضع العينات من شهر إلى آخر؟", {"metric": "noncompliance_rate", "group_by": "month"}),
+    ("نسبة الرسوب في التوابل مقارنة بالعام", {"metric": "noncompliance_rate", "filters": {"category": ["التوابل"]}, "group_by": "category"}),
+    ("كم عينة كمون ظهر فيها الكاربندازيم في مارس", {"metric": "sample_count", "filters": {"product": ["كمون"], "pesticide": ["carbendazim"]}, "period": {"type": "absolute_month", "month": 3}}),
+])
+def test_coverage_accepts_complete_specs(ask_q, q, spec):
+    assert ask_q(q, spec).ok
+
+
+def test_coverage_adds_a_missing_category_only_when_nothing_is_filtered(ask_q, ask):
+    a = ask_q("ما هي أكثر ٥ مبيدات تكراراً في الخضراوات؟", {"metric": "top_pesticides"})
+    b = ask({"metric": "top_pesticides", "filters": {"category": ["الخضروات"]}})
+    assert a.ok and a.resolved.added_from_question == ("Vegetables",)
+    assert a.text == b.text and a.df.to_csv() == b.df.to_csv()
+
+
+def test_grouped_pesticide_list_names_the_analytes_per_group(ask, con, amap):
+    a = ask({"metric": "pesticide_list", "filters": {"neighborhood": ["النهضة", "الأفق"]}, "group_by": "neighborhood"})
+    for hood in ("النهضة", "الأفق"):
+        exp = {}
+        for raw, code in con.execute(f"""SELECT pesticide_name, {CODE} FROM chemistry_tidy
+                WHERE "الحى" = ? AND is_detected = 1""", [hood]).fetchall():
+            if amap.get(raw):
+                exp.setdefault(amap[raw], set()).add(code)
+        sub = a.df[a.df["neighborhood"] == hood]
+        assert dict(zip(sub["pesticide"], sub["samples_detected"])) == {p: len(c) for p, c in exp.items()}
+
+
+def test_single_product_pesticide_list_by_product_is_a_plain_list(ask):
+    a = ask({"metric": "pesticide_list", "filters": {"product": ["هيل"]}, "group_by": "product"})
+    b = ask({"metric": "pesticide_list", "filters": {"product": ["هيل"]}})
+    assert a.text == b.text and a.df.to_csv() == b.df.to_csv()

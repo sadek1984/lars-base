@@ -17,7 +17,7 @@ from modules.semantic.query_spec import (
     ANALYTE_METRICS, COUNT_METRICS, RATE_METRICS, GroupBy, Metric, PeriodType, QuerySpec, Scope, Sort,
 )
 from modules.semantic.sql_builder import MAIN_COLUMN, MIN_RATE_SAMPLES, NoMatchingSamples, run
-from modules.semantic.validator import ResolvedSpec, SpecRejected, validate
+from modules.semantic.validator import ResolvedSpec, SpecRejected, check_coverage, validate
 
 LAB_CATEGORY = "(حسب تصنيف المختبر)"
 EU_MRL = "تجاوزت الحد الأقصى الأوروبي (EU MRL)"
@@ -29,6 +29,8 @@ CATEGORY_AR = {
     "Grains": "الحبوب", "Leafy Greens": "الورقيات", "Dates": "التمور ومنتجاتها",
     "Raw": "Raw", "Ready Foods": "Ready Foods",
 }
+GROUP_COUNT_AR = {GroupBy.category: "تصنيفاً", GroupBy.product: "منتجاً", GroupBy.municipality: "بلدية",
+                  GroupBy.neighborhood: "حياً", GroupBy.month: "شهراً"}
 GROUP_AR = {GroupBy.category: "التصنيف", GroupBy.product: "المنتج", GroupBy.municipality: "البلدية",
             GroupBy.neighborhood: "الحي", GroupBy.month: "الشهر"}
 MONTHS_AR = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو",
@@ -99,6 +101,8 @@ def _period_phrase(r: ResolvedSpec) -> Optional[str]:
         return f"خلال آخر {span} من البيانات ({lo} إلى {hi})"
     if p.type is PeriodType.absolute_month:
         return f"في شهر {MONTHS_AR[lo.month - 1]} {lo.year}"
+    if p.from_month is not None:
+        return f"من {MONTHS_AR[lo.month - 1]} إلى {MONTHS_AR[hi.month - 1]} {hi.year}"
     return f"من {lo} إلى {hi}"
 
 
@@ -128,6 +132,8 @@ def describe(r: ResolvedSpec, mixed: bool = False) -> str:
     parts = [_metric_phrase(r, mixed)] + _scope_parts(r)
     if r.spec.group_by:
         by = f"موزعة حسب {GROUP_AR[r.spec.group_by]}"
+        if r.highlight:
+            by = f"{_group_label(r.spec.group_by, r.highlight)} مقارنةً بجميع العينات ({by})"
         if r.spec.group_by is GroupBy.category and not r.categories:
             by += f" {LAB_CATEGORY}"
         parts.append(by)
@@ -162,6 +168,8 @@ def _format(r: ResolvedSpec, df: pd.DataFrame, total: Optional[pd.DataFrame], in
     s, m = r.spec, r.spec.metric
     if "samples_above_limit" in df:
         df = df.astype({"samples_above_limit": "int64"})
+    if m in ANALYTE_METRICS and s.group_by is not None:
+        return _format_detections_by_group(r, df)
     mixed = m in ANALYTE_METRICS and bool((df["analyte_class"] == "mycotoxin").any())
     lines = [describe(r, mixed)]
     if m in ANALYTE_METRICS:
@@ -185,7 +193,14 @@ def _format(r: ResolvedSpec, df: pd.DataFrame, total: Optional[pd.DataFrame], in
         return "\n".join(lines), _columns(df, m, keep_grp=False)
 
     g = s.group_by
+    if r.highlight is not None and (df["grp"] == r.highlight).any():
+        row = df[df["grp"] == r.highlight].iloc[0]
+        lines.append(f"• {_group_label(g, r.highlight)}: {_value_line(m, row)}"
+                     + (f" — تمثل {100.0 * row[MAIN_COLUMN[m]] / total.iloc[0][MAIN_COLUMN[m]]:.1f}% من الإجمالي"
+                        if m in COUNT_METRICS and total.iloc[0][MAIN_COLUMN[m]] else ""))
     for row in df.head(TEXT_ROWS).itertuples():
+        if r.highlight is not None and row.grp == r.highlight:
+            continue
         lines.append(f"• {_group_label(g, row.grp)}: {_value_line(m, row)}")
     if len(df) > TEXT_ROWS:
         lines.append(f"… والباقي في الجدول ({_n(len(df))} صفاً).")
@@ -208,9 +223,37 @@ def _format(r: ResolvedSpec, df: pd.DataFrame, total: Optional[pd.DataFrame], in
     return "\n".join(lines), out
 
 
-def answer_spec(spec: QuerySpec, catalog: Catalog, resolver, db_path: str) -> SemanticAnswer:
+def _format_detections_by_group(r: ResolvedSpec, df: pd.DataFrame):
+    """pesticide_list grouped: per group (e.g. nut product), the analytes detected.
+    One row per (group, analyte); the text names each group's top analytes."""
+    g = r.spec.group_by
+    mixed = bool((df["analyte_class"] == "mycotoxin").any())
+    what = "مركّبات (مبيدات وسموم فطرية)" if mixed else "مبيدات"
+    groups = df.drop_duplicates("grp")
+    lines = [describe(r, mixed),
+             f"النتيجة: ظهرت {what} في {_n(len(groups))} {GROUP_COUNT_AR[g]}:" if len(df) else
+             f"النتيجة: لم تظهر أي {what} في العينات المطابقة للشروط."]
+    for row in groups.head(TEXT_ROWS).itertuples():
+        sub = df[df["grp"] == row.grp]
+        names = "، ".join(sub["pesticide"].head(5)) + ("، …" if len(sub) > 5 else "")
+        lines.append(f"• {_group_label(g, row.grp)}: {_n(row.samples_with_detections)} من {_n(row.samples)} عينة، "
+                     f"{_n(len(sub))} {'مركّب' if mixed else 'مبيد'} ({names})")
+    if len(groups) > TEXT_ROWS:
+        lines.append(f"… والباقي في الجدول ({_n(len(groups))} مجموعة).")
+    out = df.rename(columns={"grp": g.value}).reset_index(drop=True)
+    for c in ("samples", "samples_with_detections", "samples_detected", "samples_above_limit"):
+        out[c] = out[c].astype("int64")
+    return "\n".join(lines), out
+
+
+def answer_spec(spec: QuerySpec, catalog: Catalog, resolver, db_path: str,
+                question: Optional[str] = None) -> SemanticAnswer:
+    """`question`: the user's words; when given, the spec must cover every
+    category/product/municipality/pesticide/period they name."""
     try:
         r = validate(spec, catalog, resolver)
+        if question is not None:
+            r = check_coverage(question, r, catalog, resolver)
     except SpecRejected as e:
         return SemanticAnswer(False, str(e))
     try:
