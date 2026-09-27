@@ -259,3 +259,73 @@ def test_connection_is_read_only(monkeypatch, ask):
     monkeypatch.setattr(sb.duckdb, "connect", lambda *a, **k: seen.append(k.get("read_only")) or real(*a, **k))
     ask({"metric": "sample_count"})
     assert seen and all(seen)
+
+
+# ── Phase 2 adjustments ──────────────────────────────────────────────────────
+
+def test_total_row_is_distinct_samples_not_the_sum_of_groups(ask, con):
+    """Spices and Grains share sample codes (e.g. 1549: Cardamom rows under
+    Spices, Coffee rows under Grains)."""
+    a = ask({"metric": "sample_count", "filters": {"category": ["التوابل", "الحبوب"]}, "group_by": "category"})
+    distinct = one(con, f"""SELECT COUNT(DISTINCT {CODE}) FROM chemistry_tidy
+        WHERE "نوع العينة" IN ('Spices', 'Grains')""")[0]
+    body, total = a.df[a.df["category"] != "الإجمالي"], row(a.df, "category", "الإجمالي")
+    assert body["samples"].sum() > distinct                       # overlap exists
+    assert total.samples == distinct
+    assert list(body["share_pct"]) == [round(100 * n / distinct, 1) for n in body["samples"]]
+    assert f"الإجمالي: {distinct:,} عينة" in a.text
+
+
+MARKERS = ["NO CBD", "NO DETECTION", "UNIVERSITY", "universty", "unveristy", "ألجامعة", "الجامعة", "الجامعه"]
+
+
+@pytest.mark.parametrize("spec", [
+    {"metric": "pesticide_list"},
+    {"metric": "top_pesticides", "top_n": 50},
+    {"metric": "never_detected_list", "filters": {"category": ["الفواكه"]}},
+])
+def test_markers_are_never_analytes(ask, spec):
+    listed = {p.lower() for p in ask(spec).df["pesticide"]}
+    assert not listed & {m.lower() for m in MARKERS}
+
+
+@pytest.mark.parametrize("marker", MARKERS)
+def test_markers_are_refused_as_pesticide_filters(ask, marker):
+    a = ask({"metric": "sample_count", "filters": {"pesticide": [marker]}})
+    assert not a.ok and f"«{marker}»" in a.text
+
+
+def test_empty_verdicts_are_the_no_detection_samples_plus_two(con):
+    empty = {r[0] for r in con.execute(f"""SELECT DISTINCT {CODE} FROM chemistry_tidy
+        WHERE sample_result IS NULL OR trim(sample_result) = ''""").fetchall()}
+    no_det = {r[0] for r in con.execute(f"""SELECT DISTINCT {CODE} FROM chemistry_tidy
+        WHERE pesticide_name = 'NO DETECTION'""").fetchall()}
+    assert (len(empty), len(no_det)) == (27, 25) and no_det <= empty
+    assert empty - no_det == {1606, 1607}
+
+
+def test_rate_denominator_includes_empty_verdicts_like_the_handlers(ask):
+    a = ask({"metric": "noncompliance_rate"})
+    assert (a.df["non_compliant"].iloc[0], a.df["samples"].iloc[0], a.df["rate_pct"].iloc[0]) == (240, 1859, 12.9)
+
+
+def test_mycotoxin_lists_are_headed_as_compounds(ask):
+    nuts = ask({"metric": "pesticide_list", "filters": {"category": ["المكسرات"]}})
+    assert "المركّبات المكتشفة (مبيدات وسموم فطرية)" in nuts.text.split("\n")[0]
+    top = ask({"metric": "top_pesticides", "filters": {"category": ["المكسرات"]}, "top_n": 3})
+    assert "aflatoxin B1" in set(top.df["pesticide"]) and "المركّبات المكتشفة (مبيدات وسموم فطرية)" in top.text
+    tomato = ask({"metric": "top_pesticides", "filters": {"product": ["الطماطم"]}})
+    assert "mycotoxin" not in set(tomato.df["analyte_class"])
+    assert "مبيدات ظهوراً" in tomato.text and "سموم فطرية" not in tomato.text
+
+
+def test_mrl_multiple_wording(ask):
+    a = ask({"metric": "above_limit_sample_count", "filters": {"category": ["التوابل"]}, "mrl_multiple": 2})
+    assert "تجاوزت 2 أضعاف الحد الأقصى الأوروبي" in a.text
+    for bad in ("مخالف", "غير مطابق", "violation", "non-compliant"):
+        assert bad not in a.text.lower()
+
+
+def test_never_detected_wording(ask):
+    a = ask({"metric": "never_detected_list", "filters": {"category": ["الفواكه"]}})
+    assert "من بين المركّبات التي ظهرت في البيانات" in a.text.split("\n")[0]

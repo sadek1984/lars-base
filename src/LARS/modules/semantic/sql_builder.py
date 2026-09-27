@@ -9,7 +9,17 @@ Definitions
   non-compliant   sample_result = 'Non-Compliant' (the lab's official verdict)
   above limit     is_above_limit = 1: a result above the EU MRL, a technical
                   reference comparison, never called a violation
-  rates           denominator = distinct samples matching the filters
+  rates           denominator = ALL distinct samples matching the filters,
+                  including samples whose sample_result is empty (27 in the
+                  demo DB: the 25 'NO DETECTION' samples + 2 without a verdict).
+                  Same rule as the handlers: 240 / 1,859 = 12.9%.
+  totals          a grouped answer's total row is recomputed over distinct
+                  samples, never summed from the groups (a sample can sit
+                  under two categories); share_pct is against that total.
+  analytes        only raw names with a non-empty canonical name in
+                  analyte_map.csv are analytes. Markers ('NO DETECTION',
+                  'NO CBD', the 'University' spellings) map to '' and never
+                  appear in lists, rankings, never_detected_list or filters.
   pesticide filter  a sample qualifies when the analyte was detected in it;
                   for above-limit metrics, when that analyte was above the limit
 """

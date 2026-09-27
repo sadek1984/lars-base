@@ -59,18 +59,32 @@ def _n(x) -> str:
     return f"{int(x):,}"
 
 
-def _metric_phrase(r: ResolvedSpec) -> str:
+COMPOUNDS = "المركّبات المكتشفة (مبيدات وسموم فطرية)"
+AMONG_DETECTED = "من بين المركّبات التي ظهرت في البيانات"
+
+
+def _above_phrase(k: Optional[float]) -> str:
+    """'تجاوزت الحد الأقصى الأوروبي (EU MRL)', or with a multiple
+    'تجاوزت 2 أضعاف الحد الأقصى الأوروبي (EU MRL)'. Never violation wording."""
+    return EU_MRL if not k or k == 1 else f"تجاوزت {k:g} أضعاف الحد الأقصى الأوروبي (EU MRL)"
+
+
+def _metric_phrase(r: ResolvedSpec, mixed: bool = False) -> str:
+    """`mixed`: the listed analytes include mycotoxins, so they are not all 'مبيدات'."""
     s = r.spec
-    k = f" بمقدار {s.mrl_multiple:g}× الحد أو أكثر" if s.mrl_multiple else ""
+    above = _above_phrase(s.mrl_multiple)
+    most = "أقل" if s.sort is Sort.asc else "أكثر"
     return {
         Metric.sample_count: "عدد العينات",
         Metric.noncompliant_count: f"عدد العينات غير المطابقة {OFFICIAL}",
         Metric.noncompliance_rate: f"نسبة العينات غير المطابقة {OFFICIAL}",
-        Metric.above_limit_sample_count: f"عدد العينات التي {EU_MRL}{k}",
-        Metric.above_limit_rate: f"نسبة العينات التي {EU_MRL}{k}",
-        Metric.top_pesticides: f"{'أقل' if s.sort is Sort.asc else 'أكثر'} {s.top_n} مبيدات ظهوراً (حسب عدد العينات)",
-        Metric.pesticide_list: "المبيدات والسموم الفطرية التي ظهرت",
-        Metric.never_detected_list: "المبيدات التي ظهرت في بيانات المختبر ولم تظهر أبداً",
+        Metric.above_limit_sample_count: f"عدد العينات التي {above}",
+        Metric.above_limit_rate: f"نسبة العينات التي {above}",
+        Metric.top_pesticides: (f"{most} {s.top_n} من {COMPOUNDS} ظهوراً (حسب عدد العينات)" if mixed
+                                else f"{most} {s.top_n} مبيدات ظهوراً (حسب عدد العينات)"),
+        Metric.pesticide_list: COMPOUNDS if mixed else "المبيدات التي ظهرت",
+        Metric.never_detected_list: (f"{'المركّبات (مبيدات وسموم فطرية)' if mixed else 'المبيدات'} "
+                                     f"التي لم تظهر أبداً، {AMONG_DETECTED}"),
     }[s.metric]
 
 
@@ -110,8 +124,8 @@ def _scope_parts(r: ResolvedSpec) -> List[str]:
     return parts
 
 
-def describe(r: ResolvedSpec) -> str:
-    parts = [_metric_phrase(r)] + _scope_parts(r)
+def describe(r: ResolvedSpec, mixed: bool = False) -> str:
+    parts = [_metric_phrase(r, mixed)] + _scope_parts(r)
     if r.spec.group_by:
         by = f"موزعة حسب {GROUP_AR[r.spec.group_by]}"
         if r.spec.group_by is GroupBy.category and not r.categories:
@@ -148,11 +162,12 @@ def _format(r: ResolvedSpec, df: pd.DataFrame, total: Optional[pd.DataFrame], in
     s, m = r.spec, r.spec.metric
     if "samples_above_limit" in df:
         df = df.astype({"samples_above_limit": "int64"})
-    lines = [describe(r)]
+    mixed = m in ANALYTE_METRICS and bool((df["analyte_class"] == "mycotoxin").any())
+    lines = [describe(r, mixed)]
     if m in ANALYTE_METRICS:
         if m is Metric.never_detected_list:
-            lines.append(f"النتيجة: {_n(len(df))} مبيداً ظهر في عينات أخرى في بيانات المختبر ولم يظهر في النطاق المطلوب "
-                         "(البيانات تسجّل المبيدات المكتشفة فقط، والأسماء موحّدة حسب جدول أسماء المبيدات).")
+            lines.append(f"النتيجة: {_n(len(df))} مركّباً لم يظهر في النطاق المطلوب، {AMONG_DETECTED} "
+                         "(البيانات تسجّل المركّبات المكتشفة فقط، والأسماء موحّدة حسب جدول أسماء المبيدات).")
             lines += [f"• {p}" for p in df["pesticide"].head(TEXT_ROWS)]
         elif df.empty:
             lines.append("النتيجة: لم يظهر أي مبيد في العينات المطابقة للشروط.")
