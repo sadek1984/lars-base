@@ -89,9 +89,9 @@ class EntityDetectionMixin:
         """
         res = self._resolve(query)
         if res is not None:
-            # Categories are not passed to handlers (category questions are
-            # refused in process()); only products are returned.
-            return list(res.products)
+            if res.products:
+                return list(res.products)
+            return [f"__cat__{res.categories[0]}"] if res.categories else []
 
         detected = []
         query_lower = query.lower()
@@ -212,7 +212,7 @@ class EntityDetectionMixin:
             'detected_pesticide': detected_pesticide,
             'detected_period': detected_period,
             'detected_period_label': detected_period_label,
-            'category_key': None if self._get_resolver() is not None else category_key,
+            'category_key': category_key,
             'resolution': self._resolve(query),
             # A relative-period phrase ("خلال الأشهر الأخيرة") that did not parse:
             # answering over all dates would silently broaden the question.

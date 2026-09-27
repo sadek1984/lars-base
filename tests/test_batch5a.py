@@ -258,3 +258,30 @@ def test_samples_without_detections_still_say_none_found(engine, con):
         WHERE "اسم العينة" IN {CUMIN} AND {DATE} >= {ANCHOR} - INTERVAL 2 day""").fetchone()[0]
     text, _ = engine.process("ما هي المبيدات في الكمون آخر يومين")[:2]
     assert n == 4 and "لا توجد عينات في البيانات تطابق" not in text
+
+
+# ── Category allow-list (Step 0) ─────────────────────────────────────────────
+
+@pytest.mark.parametrize("qid", ["A021", "A023", "A045", "A046", "B022", "C014", "E007", "E016"])
+def test_verified_category_answers_are_served(engine, bank, qid):
+    """Correct at demo-freeze-2026-09 (checked against SQL) → restored."""
+    from modules.query.messages import CATEGORY_UNSUPPORTED_MESSAGE
+    text, df = engine.process(bank[qid])[:2]
+    assert text != CATEGORY_UNSUPPORTED_MESSAGE and df is not None and len(df) > 0
+
+
+@pytest.mark.parametrize("qid", ["A025", "A038", "A039", "A040", "B019", "B023", "B049", "D023"])
+def test_unverified_category_answers_stay_refused(engine, bank, qid):
+    """Wrong (or wrong metric) at the tag → the honest category refusal."""
+    from modules.query.messages import CATEGORY_UNSUPPORTED_MESSAGE
+    text, df = engine.process(bank[qid])[:2]
+    assert text == CATEGORY_UNSUPPORTED_MESSAGE and df is None
+
+
+@pytest.mark.parametrize("q", ["كم عدد العينات غير المطابقة في الخضروات؟",
+                               "ما هي العينات غير المطابقة من الفواكه في جمعية البطين الزراعية؟"])
+def test_generic_category_questions_refused_not_broadened(engine, q):
+    """Handlers not verified for categories may ignore them and answer over
+    all data; the allow-list refuses instead."""
+    from modules.query.messages import CATEGORY_UNSUPPORTED_MESSAGE
+    assert engine.process(q)[0] == CATEGORY_UNSUPPORTED_MESSAGE

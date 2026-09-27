@@ -114,6 +114,10 @@ class CoreQueryEngine(
         self._load_mappings()
         self._load_schema_info()
         self._resolver = None
+        # Which _handle_* methods answered the current question (reset at the
+        # start of every process() call — no state carried between questions).
+        self._handlers_called: List[Tuple[str, tuple, dict]] = []
+        self._record_handler_calls()
         self._resolution_cache: Tuple[Optional[str], Any] = (None, None)
         
         # Initialize semantic pattern recognizer (optional)
@@ -472,6 +476,7 @@ class CoreQueryEngine(
         its traceback and replaced by POLITE_ERROR_MESSAGE, and every result
         passes the percentage sanity guard.
         """
+        self._handlers_called = []
         try:
             response_text, df = self._process_unguarded(query)
         except DatabaseUnavailableError as db_err:
@@ -505,6 +510,38 @@ class CoreQueryEngine(
                 )
                 return CANNOT_COMPUTE_RATE_MESSAGE, None
         return response_text, df
+
+    def _record_handler_calls(self) -> None:
+        """Wrap each _handle_* method once so process() knows which handler
+        answered (used by the category allow-list)."""
+        for name in dir(self):
+            if name.startswith("_handle_") and callable(getattr(self, name, None)):
+                fn = getattr(self, name)
+                def wrapped(*args, _fn=fn, _name=name, **kwargs):
+                    self._handlers_called.append((_name, args, kwargs))
+                    return _fn(*args, **kwargs)
+                setattr(self, name, wrapped)
+
+    # Handlers whose category answers were verified against SQL at the tag
+    # demo-freeze-2026-09 (A021 A023 A045 A046 B022 C014 E007 E016), with the
+    # argument check that selects the verified mode.
+    _CATEGORY_VERIFIED = {
+        "_handle_pesticide_in_category": lambda a, k: True,
+        "_handle_category_comparison": lambda a, k: k.get("metric", a[2] if len(a) > 2 else "count")
+                                                    in ("count", "avg_pesticides"),
+        "_handle_comprehensive_neighborhood": lambda a, k: True,
+        "_handle_category_limit_summary": lambda a, k: k.get("by_pesticide", False) is True,
+        "_handle_pesticide_stats": lambda a, k: True,
+    }
+
+    def _category_answer_verified(self) -> bool:
+        """True if the handler that answered (the first one called) is on the
+        category allow-list with a verified mode."""
+        if not self._handlers_called:
+            return False
+        name, args, kwargs = self._handlers_called[0]
+        check = self._CATEGORY_VERIFIED.get(name)
+        return bool(check and check(args, kwargs))
 
     def _guard_empty_scope(self, ctx: dict, response_text: str, df: Optional[pd.DataFrame]):
         """An empty result is only "none found" if the question's own filters
@@ -600,12 +637,12 @@ class CoreQueryEngine(
         # Two or more months named: the month filter would keep only the first.
         if ctx.get('multi_month'):
             return MULTI_MONTH_MESSAGE, None
-        # Category-level questions (مكسرات، خضروات، فواكه، توابل …) are not
-        # supported: no handler receives a category. A product named alongside
-        # a category word still answers for that product.
+        # "المكسرات" read as the product 'Mixed Nuts' (the category word itself):
+        # refuse — the only product came from the category word.
         products, categories = self._products_and_categories(ctx)
-        if categories and not products:
+        if categories and resolution is not None and resolution.products and not products:
             return CATEGORY_UNSUPPORTED_MESSAGE, None
+        category_question = bool(categories) and not products
 
         # ── Tier 0: Explicit compliance-status override ──────────────────────
         # Official lab verdict (sample_result) keywords — "غير مطابقة" / "راسبة" /
@@ -683,6 +720,10 @@ class CoreQueryEngine(
             result = (self._handle_unknown_query(query), None)
 
         response_text, df = result
+        # Category questions are answered only by handlers verified for them;
+        # any other handler (which may ignore the category) → honest refusal.
+        if category_question and not self._category_answer_verified():
+            return CATEGORY_UNSUPPORTED_MESSAGE, None
         response_text, df = self._guard_empty_scope(ctx, response_text, df)
 
         # ── Append date-range label once, regardless of which tier answered ───

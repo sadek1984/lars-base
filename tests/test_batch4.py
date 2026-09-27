@@ -97,11 +97,9 @@ def test_both_extraction_layers_resolve_misheard_pesticide(engine):
 
 
 def test_E016_misheard_name_gives_same_answer_as_original(engine, bank):
-    """Both the original and the misheard variant name categories → same refusal."""
-    from modules.query.messages import CATEGORY_UNSUPPORTED_MESSAGE
-    original = engine.process(bank["E016"])[0]
-    variant = engine.process("قارن متوسط تركيز الكاربندازين بين التوابل والخضراوات")[0]
-    assert original == variant == CATEGORY_UNSUPPORTED_MESSAGE
+    _, original = engine.process(bank["E016"])[:2]
+    _, variant = engine.process("قارن متوسط تركيز الكاربندازين بين التوابل والخضراوات")[:2]
+    assert variant.to_csv(index=False) == original.to_csv(index=False)
 
 
 # ── 3. Compliance verb forms → official verdict ──────────────────────────────

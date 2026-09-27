@@ -119,18 +119,20 @@ def test_A010_acetamiprid_in_sweet_green_pepper(engine, bank, con):
     assert len(df) == expected
 
 
-def test_A021_vegetables_with_bifenthrin(engine, bank):
-    """A021 names a category. Category-level questions are refused (not supported)."""
-    from modules.query.messages import CATEGORY_UNSUPPORTED_MESSAGE
-    text, df = engine.process(bank["A021"])[:2]
-    assert text == CATEGORY_UNSUPPORTED_MESSAGE and df is None
+def test_A021_vegetables_with_bifenthrin(engine, bank, con):
+    _, df = ask(engine, bank, "A021")
+    expected = scalar(con, f"""SELECT count(DISTINCT "اسم العينة") FROM chemistry_tidy WHERE {D}
+        AND regexp_matches(lower(pesticide_name), 'bifenth') AND "نوع العينة" = 'Vegetables'""")
+    assert expected == 7
+    assert df["sample_name"].nunique() == expected
 
 
-def test_A023_spices_with_carbendazim(engine, bank):
-    """A023 names a category. Category-level questions are refused (not supported)."""
-    from modules.query.messages import CATEGORY_UNSUPPORTED_MESSAGE
-    text, df = engine.process(bank["A023"])[:2]
-    assert text == CATEGORY_UNSUPPORTED_MESSAGE and df is None
+def test_A023_spices_with_carbendazim(engine, bank, con):
+    _, df = ask(engine, bank, "A023")
+    expected = scalar(con, f"""SELECT count(DISTINCT "اسم العينة") FROM chemistry_tidy WHERE {D}
+        AND regexp_matches(lower(pesticide_name), 'carbend') AND "نوع العينة" = 'Spices'""")
+    assert expected == 11
+    assert df["sample_name"].nunique() == expected
 
 
 def test_A040_pesticides_never_detected_in_fruits(engine, bank):
@@ -140,11 +142,12 @@ def test_A040_pesticides_never_detected_in_fruits(engine, bank):
     assert text == CATEGORY_UNSUPPORTED_MESSAGE and df is None
 
 
-def test_B022_spice_pesticides_above_below(engine, bank):
-    """B022 names a category. Category-level questions are refused (not supported)."""
-    from modules.query.messages import CATEGORY_UNSUPPORTED_MESSAGE
-    text, df = engine.process(bank["B022"])[:2]
-    assert text == CATEGORY_UNSUPPORTED_MESSAGE and df is None
+def test_B022_spice_pesticides_above_below(engine, bank, con):
+    _, df = ask(engine, bank, "B022")
+    expected = scalar(con, f"""SELECT count(*) FROM (SELECT 1 FROM chemistry_tidy WHERE {D}
+        AND "نوع العينة" = 'Spices' GROUP BY "نوع الاختبار", pesticide_name)""")
+    assert expected == 162
+    assert len(df) == expected
 
 
 def test_B009_failed_pepper_samples(engine, bank, con):

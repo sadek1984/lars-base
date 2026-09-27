@@ -598,7 +598,8 @@ class KeywordPatternsMixin:
         }
         _cat_key_process = None
         if resolution is not None:
-            _cat_key_process = None   # category questions are refused in process()
+            # Resolved DB category ('Spices'); the handlers filter "نوع العينة" = ?
+            _cat_key_process = resolution.categories[0] if resolution.categories else None
         else:
             for kw, cat in _cat_en_map.items():
                 if kw in query_lower:
@@ -740,6 +741,8 @@ class KeywordPatternsMixin:
             return self._handle_top_n_by_metric('facility', 'count', 10)
 
         # Pattern A040: pesticides never detected in a category
+        if ('لم تظهر' in query or 'لم يظهر' in query) and resolution is not None and resolution.categories:
+            return self._handle_never_detected_in_category(resolution.categories[0])
         if resolution is None and 'لم تظهر إطلاقاً' in query and 'فواكه' in query:
             return self._handle_never_detected_in_category('fruit')
 
