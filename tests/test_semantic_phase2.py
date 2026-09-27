@@ -412,3 +412,12 @@ def test_single_product_pesticide_list_by_product_is_a_plain_list(ask):
     a = ask({"metric": "pesticide_list", "filters": {"product": ["هيل"]}, "group_by": "product"})
     b = ask({"metric": "pesticide_list", "filters": {"product": ["هيل"]}})
     assert a.text == b.text and a.df.to_csv() == b.df.to_csv()
+
+
+def test_this_month_and_first_quarter_wording(ask, ask_q):
+    a = ask({"metric": "noncompliance_rate", "period": {"type": "latest_month"}})
+    assert a.df["samples"].iloc[0] == 229 and "آخر شهر في البيانات: مايو 2026" in a.text
+    q = ask({"metric": "noncompliance_rate", "period": {"type": "range", "from_month": 1, "to_month": 3}})
+    assert q.df["samples"].iloc[0] == 1111 and "الربع الأول 2026 (يناير–مارس)" in q.text
+    for question in ("ما هو ملخص الأداء هذا الشهر؟", "ملخص الربع الأول"):
+        assert not ask_q(question, {"metric": "noncompliance_rate"}).ok      # period dropped → refused

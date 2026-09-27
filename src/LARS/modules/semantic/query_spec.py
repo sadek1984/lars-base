@@ -42,6 +42,7 @@ class PeriodType(str, Enum):
     none = "none"
     relative = "relative"              # "آخر 3 شهور": n units back from MAX(test_date)
     absolute_month = "absolute_month"  # "في مارس"
+    latest_month = "latest_month"      # "هذا الشهر / الشهر الحالي": calendar month of MAX(test_date)
     range = "range"                    # "من يناير إلى مارس": from_month..to_month, or start..end dates
 
 
@@ -89,7 +90,7 @@ class Period(_Strict):
             needed, optional = next(((n, o) for n, o in options if n <= given), options[0])
         else:
             needed = {PeriodType.none: set(), PeriodType.relative: {"n", "unit"},
-                      PeriodType.absolute_month: {"month"}}[self.type]
+                      PeriodType.absolute_month: {"month"}, PeriodType.latest_month: set()}[self.type]
             optional = {"year"} if self.type is PeriodType.absolute_month else set()
         if needed - given:
             raise ValueError(f"period '{self.type.value}' needs {sorted(needed - given)}")
@@ -112,6 +113,8 @@ class Period(_Strict):
                 return self.start, self.end
             year = self.year or max_date.year
             return date(year, self.from_month, 1), _month_end(year, self.to_month)
+        if self.type is PeriodType.latest_month:
+            return date(max_date.year, max_date.month, 1), _month_end(max_date.year, max_date.month)
         if self.type is PeriodType.absolute_month:
             year = self.year or max_date.year
             return date(year, self.month, 1), _month_end(year, self.month)

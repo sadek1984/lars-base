@@ -35,6 +35,7 @@ GROUP_AR = {GroupBy.category: "التصنيف", GroupBy.product: "المنتج",
             GroupBy.neighborhood: "الحي", GroupBy.month: "الشهر"}
 MONTHS_AR = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو",
              "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"]
+QUARTERS_AR = {(1, 3): "الأول", (4, 6): "الثاني", (7, 9): "الثالث", (10, 12): "الرابع"}
 UNIT_AR = {  # (1, 2, 3–10, 11+)
     "day": ("يوم", "يومين", "أيام", "يوماً"), "week": ("أسبوع", "أسبوعين", "أسابيع", "أسبوعاً"),
     "month": ("شهر", "شهرين", "أشهر", "شهراً"), "year": ("سنة", "سنتين", "سنوات", "سنة"),
@@ -101,7 +102,12 @@ def _period_phrase(r: ResolvedSpec) -> Optional[str]:
         return f"خلال آخر {span} من البيانات ({lo} إلى {hi})"
     if p.type is PeriodType.absolute_month:
         return f"في شهر {MONTHS_AR[lo.month - 1]} {lo.year}"
+    if p.type is PeriodType.latest_month:
+        return f"آخر شهر في البيانات: {MONTHS_AR[lo.month - 1]} {lo.year}"
     if p.from_month is not None:
+        quarter = QUARTERS_AR.get((p.from_month, p.to_month))
+        if quarter:
+            return f"الربع {quarter} {hi.year} ({MONTHS_AR[lo.month - 1]}–{MONTHS_AR[hi.month - 1]})"
         return f"من {MONTHS_AR[lo.month - 1]} إلى {MONTHS_AR[hi.month - 1]} {hi.year}"
     return f"من {lo} إلى {hi}"
 

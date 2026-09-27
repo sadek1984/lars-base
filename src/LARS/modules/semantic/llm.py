@@ -137,6 +137,8 @@ scope = non_compliant فقط عندما يُسأل عن المبيدات أو ا
 الفترة (period) — البيانات من {catalog.min_date} إلى {catalog.max_date}:
 - "آخر شهر/آخر شهرين/آخر 3 أشهر/آخر أسبوع" ← relative {{n, unit}}.
 - اسم شهر واحد ← absolute_month {{month}} (بدون year إلا إذا ذُكرت السنة).
+- "هذا الشهر / الشهر الحالي" ← latest_month (بدون حقول أخرى).
+- "الربع الأول/الثاني/الثالث/الرابع" ← range {{from_month, to_month}} = 1–3 / 4–6 / 7–9 / 10–12.
 - "من شهر إلى شهر" ← range {{from_month, to_month}} (أرقام الأشهر، بدون year إلا إذا ذُكرت السنة).
   لا تضع range بدون from_month و to_month.
 - بدون فترة ← لا تضع period.

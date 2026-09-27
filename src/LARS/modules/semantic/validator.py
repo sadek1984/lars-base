@@ -179,6 +179,7 @@ def validate(spec: QuerySpec, catalog: Catalog, resolver) -> ResolvedSpec:
 
 # ── Coverage: the spec must not drop what the question names ─────────────────
 
+_PERIOD_WORDS = ["هذا الشهر", "الشهر الحالي", "الربع"]   # normalized; must set a period
 _MONTHS = ["يناير", "فبراير", "مارس", "ابريل", "مايو", "يونيو", "يوليو", "اغسطس",
            "سبتمبر", "اكتوبر", "نوفمبر", "ديسمبر"]
 
@@ -228,7 +229,8 @@ def check_coverage(question: str, r: ResolvedSpec, catalog: Catalog, resolver) -
             canon = catalog.analytes.raw_to_canonical.get(named_p) or named_p.lower()
             if canon not in r.pesticides:
                 raise SpecRejected(f"coverage: pesticide {named_p} dropped")
-    months = {m for m in _MONTHS if m in norm(question).replace("أ", "ا").replace("إ", "ا")}
+    q = norm(question).replace("أ", "ا").replace("إ", "ا")
+    months = {m for m in _MONTHS + _PERIOD_WORDS if m in q}
     # "من شهر إلى آخر" with group_by month is a trend, not a period.
     phrase = has_period_phrase(question) and g is not GroupBy.month
     if (phrase or months) and r.period is None:

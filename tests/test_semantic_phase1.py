@@ -156,3 +156,11 @@ def test_month_range(con):
                 {"type": "range", "from_month": 1, "to_month": 3, "start": "2026-01-01"}):
         with pytest.raises(ValidationError):
             Period.model_validate(bad)
+
+
+def test_latest_month_is_the_calendar_month_of_the_latest_data(con):
+    p = Period(type="latest_month")
+    assert p.bounds(date(2026, 5, 17)) == (date(2026, 5, 1), date(2026, 5, 31))
+    assert count_between(con, *p.bounds(date(2026, 5, 17))) == 229
+    with pytest.raises(ValidationError):
+        Period.model_validate({"type": "latest_month", "month": 5})
