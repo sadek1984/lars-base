@@ -44,6 +44,11 @@ class KeywordPatternsMixin:
         re.compile(_PEST + r"\s+(?:التي|اللي)\s+سببت\s+عدم\s+المطابقه"),
     )
     _PESTICIDES_IN_SAMPLES = re.compile(_PEST + r"\s+(?:اللي\s+)?في\s+العينات")
+    # "ما هي / ما / وش المبيدات (الموجودة|التي ظهرت|اللي) في <فئة>" — a list, not a count.
+    _PESTICIDE_LIST = re.compile(
+        r"(?:^|\s)(?:(?:ما\s+هي|ماهي|ما|وش|اعرض|اعطني|عطني)\s+)?(?:ال)?مبيدات\s+"
+        r"(?:(?:الموجوده|الموجود|التي\s+ظهرت|اللي\s+ظهرت|اللي|المكتشفه)\s+)?في\s")
+    _NOT_A_LIST = {"عدد", "متوسط", "نسبه", "توزيع", "مقابل", "قارن", "لم", "فوق", "تحت"}
 
     def _dispatch_top_pesticides(self, ctx: dict) -> Optional[Tuple[str, Optional[pd.DataFrame]]]:
         """Top N pesticides overall or in non-compliant samples (Batch 5a).
@@ -62,7 +67,16 @@ class KeywordPatternsMixin:
         # "عدم المطابقة" means non-compliance; the shared compliance_intent reads
         # it as 'compliant' ("عدم" is not in its negator list), so check it here.
         non_compliant = verdict == 'non_compliant' or 'عدم المطابقه' in q
-        if not ranking or (verdict == 'compliant' and not non_compliant):
+        if not ranking:
+            # Category list: "ما هي المبيدات الموجودة في المكسرات" → every
+            # pesticide in that category (scope all, no top-N cut).
+            products, categories = self._products_and_categories(ctx)
+            if (categories and not products and verdict is None
+                    and self._PESTICIDE_LIST.search(q)
+                    and not (set(tokens(query)) & self._NOT_A_LIST)):
+                return self._handle_top_pesticides(ctx, 'all', None)
+            return None
+        if verdict == 'compliant' and not non_compliant:
             return None
         scope = 'non_compliant' if non_compliant else 'all'
         counts = count_for_nouns(query, COUNT_NOUNS["pesticides"])

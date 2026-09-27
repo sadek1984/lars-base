@@ -505,6 +505,51 @@ class CoreQueryEngine(
                 return CANNOT_COMPUTE_RATE_MESSAGE, None
         return response_text, df
 
+    def _guard_empty_scope(self, ctx: dict, response_text: str, df: Optional[pd.DataFrame]):
+        """An empty result is only "none found" if the question's own filters
+        match samples. When they match none (e.g. a product/category/place in
+        a period with no samples), say that instead of "no pesticides found".
+        Filters mirror the handlers: exact products, else the stored category;
+        municipalities; facilities; neighborhoods (LIKE, hamza variants);
+        the period fragment. No filters → nothing to check."""
+        if df is None or not df.empty:
+            return response_text, df
+        res = ctx.get("resolution")
+        products, categories = self._products_and_categories(ctx)
+        where, params, labels = [], [], []
+        if products:
+            sql, p = self._in_clause("اسم العينة", products)
+            where.append(sql); params += p; labels.append(" + ".join(products))
+        elif categories or ctx.get("category_key"):
+            cat = categories[0] if categories else ctx["category_key"]
+            sql, p, label = self._category_or_samples_filter(cat, [])
+            if sql:
+                where.append(sql); params += p; labels.append(label)
+        for column, values in (("اسم البلدية", getattr(res, "municipalities", [])),
+                               ("اسم المنشاة", getattr(res, "facilities", []))):
+            if values:
+                sql, p = self._in_clause(column, list(values))
+                where.append(sql); params += p; labels.append(" + ".join(values))
+        hoods = ctx.get("detected_neighborhoods") or []
+        if hoods:
+            variants = sorted({v for n in hoods for v in (n, n.replace('ا', 'إ'), n.replace('ا', 'أ'),
+                                                          n.replace('إ', 'ا'), n.replace('أ', 'ا'))})
+            where.append("(" + " OR ".join('"الحى" LIKE ?' for _ in variants) + ")")
+            params += [f"%{v}%" for v in variants]; labels.append(" + ".join(hoods))
+        period = ctx.get("detected_period") or ""
+        if period:
+            labels.append(ctx.get("detected_period_label") or "الفترة المحددة")
+        if not where and not period:
+            return response_text, df
+        con = self._get_connection()
+        n = con.execute(f'SELECT COUNT(DISTINCT "كود العينة") FROM chemistry_tidy '
+                        f'WHERE {" AND ".join(where) or "1=1"} {period}', params).fetchone()[0]
+        con.close()
+        if n:
+            return response_text, df
+        return (f"⚠️ لا توجد عينات في البيانات تطابق: {'، '.join(labels)}. "
+                f"لذلك لا توجد نتيجة لهذا النطاق — وهذا لا يعني عدم وجود مبيدات."), df
+
     def _process_unguarded(self, query: str) -> Tuple[str, Optional[pd.DataFrame]]:
         """
         Process a query and return (response_text, DataFrame | None).
@@ -636,6 +681,7 @@ class CoreQueryEngine(
             result = (self._handle_unknown_query(query), None)
 
         response_text, df = result
+        response_text, df = self._guard_empty_scope(ctx, response_text, df)
 
         # ── Append date-range label once, regardless of which tier answered ───
         if period_label:

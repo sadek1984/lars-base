@@ -514,7 +514,25 @@ class AdvancedHandlersMixin:
         "samples_above_limit": "تجاوزت الحد الأقصى الأوروبي (EU MRL) (عينة)",
     }
 
-    def _handle_top_pesticides(self, ctx: dict, scope: str, n: int) -> Tuple[str, pd.DataFrame]:
+    def _products_and_categories(self, ctx: dict) -> Tuple[List[str], List[str]]:
+        """Resolved (products, categories), where a category word that the
+        resolver ALSO read as a legacy product phrase counts as the category:
+        "المكسرات" is the category Nuts, not the product 'Mixed Nuts' (1 sample,
+        0 detections). Products the user named separately are kept."""
+        resolution = ctx.get("resolution")
+        if resolution is None:
+            return list(ctx["detected_samples"]), []
+        products, categories = list(resolution.products), list(resolution.categories)
+        if categories and products:
+            words = ctx["query"].split()
+            cat_positions = {i for term in resolution.category_terms
+                             for i, w in enumerate(words) if w == term}
+            if cat_positions and cat_positions <= set(resolution.consumed):
+                if not [i for i in resolution.consumed if i not in cat_positions]:
+                    products = []
+        return products, categories
+
+    def _handle_top_pesticides(self, ctx: dict, scope: str, n: Optional[int]) -> Tuple[str, pd.DataFrame]:
         """Top N pesticides over a scope of samples.
 
         scope 'all'           → every sample matching the filters, ranked by
@@ -523,27 +541,16 @@ class AdvancedHandlersMixin:
                                 as stored) is Non-Compliant, ranked by
                                 samples_above_limit, then samples_detected.
         Both counts are distinct samples; ties break on pesticide name.
+        n=None lists every pesticide (category list questions).
+
         Filters (all optional): the report handler's period fragment, exact
         products, stored category, municipality. Spelling variants of one
         pesticide are merged with canonical_pesticide().
         """
         from modules.query.entity_resolver import canonical_pesticide
         resolution = ctx.get("resolution")
-        products = list(resolution.products) if resolution is not None else list(ctx["detected_samples"])
-        categories = list(resolution.categories) if resolution is not None else []
+        products, categories = self._products_and_categories(ctx)
         municipalities = list(resolution.municipalities) if resolution is not None else []
-
-        # "المكسرات" is both the category Nuts and a legacy product phrase for
-        # 'Mixed Nuts'. When the category word itself was consumed as a product,
-        # the category is what was asked for; products named separately stay.
-        if resolution is not None and categories and products:
-            words = ctx["query"].split()
-            cat_positions = {i for term in resolution.category_terms
-                             for i, w in enumerate(words) if w == term}
-            if cat_positions and cat_positions <= set(resolution.consumed):
-                other = [i for i in resolution.consumed if i not in cat_positions]
-                if not other:
-                    products = []
 
         where, params, parts = ["1=1"], [], []
         if products:
@@ -600,11 +607,16 @@ class AdvancedHandlersMixin:
         keys = (["samples_detected", "samples_above_limit"] if scope == "all"
                 else ["samples_above_limit", "samples_detected"])
         df = df.sort_values(keys + ["pesticide"], ascending=[False, False, True], kind="stable")
-        df = df.head(n).reset_index(drop=True)
+        if n is not None:
+            df = df.head(n)
+        df = df.reset_index(drop=True)
 
         response = f"📊 **{heading}: {total} عينة**\n\n"
-        response += f"أكثر {len(df)} مبيدات "
-        response += ("ظهوراً" if scope == "all" else "تجاوزاً للحد الأقصى الأوروبي في هذه العينات") + ":\n\n"
+        if n is None:
+            response += f"المبيدات المكتشفة ({len(df)} مبيداً)، مرتبة حسب عدد العينات:\n\n"
+        else:
+            response += f"أكثر {len(df)} مبيدات "
+            response += ("ظهوراً" if scope == "all" else "تجاوزاً للحد الأقصى الأوروبي في هذه العينات") + ":\n\n"
         response += df.rename(columns=self.TOP_PESTICIDE_COLUMN_LABELS).to_markdown(index=False)
         response += ("\n\n*اكتُشف في = عدد العينات التي رُصد فيها المبيد. "
                      "تجاوزت الحد الأقصى الأوروبي = عدد العينات التي تجاوز فيها الحد الأقصى الأوروبي (EU MRL)، "

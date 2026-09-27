@@ -217,3 +217,46 @@ def test_deterministic(engine):
     q = "أكثر 10 مبيدات في العينات غير المطابقة"
     answers = {engine.process(q)[0] for _ in range(5)}
     assert len(answers) == 1
+
+
+# ── Category pesticide lists (same branch, follow-up) ────────────────────────
+
+@pytest.mark.parametrize("q, category", [
+    ("المبيدات الموجودة في المكسرات", "Nuts"),
+    ("ما هي المبيدات في الخضروات؟", "Vegetables"),
+    ("ما هي المبيدات التي ظهرت في الفواكه؟", "Fruits"),
+    ("وش المبيدات اللي في التوابل؟", "Spices"),
+])
+def test_category_list_matches_sql(engine, con, q, category):
+    """Every pesticide in the category, not just a top N, and never
+    'no pesticides found' (nuts used to resolve to 'Mixed Nuts')."""
+    where = f"\"نوع العينة\" = '{category}'"
+    total, rows = expected(con, "all", 1000, where)
+    text, df = engine.process(q)[:2]
+    assert f": {total} عينة" in text.splitlines()[0]
+    got = list(df[["pesticide", "samples_detected", "samples_above_limit"]].itertuples(index=False, name=None))
+    assert got == rows and len(got) > 0
+    assert "No pesticides found" not in text and "Mixed Nuts" not in text
+
+
+@pytest.mark.parametrize("q", [
+    "المبيدات الموجودة في الفستق",                      # product list: existing handler
+    "ما هو متوسط عدد المبيدات في التوابل مقابل الخضراوات؟",  # C014 comparison
+    "ما هي المبيدات التي لم تظهر إطلاقاً في الفواكه؟",       # A040 negation
+])
+def test_category_list_trigger_leaves_other_questions(engine, q):
+    assert engine._dispatch_top_pesticides(engine._extract_context(q)) is None
+
+
+def test_empty_scope_says_no_samples_not_no_pesticides(engine, con):
+    """Dates in the last two days: 0 samples → the filter matched nothing."""
+    text, _ = engine.process("هل ظهر الأبامكتين في التمر آخر يومين")[:2]
+    assert "لا توجد عينات في البيانات تطابق" in text
+
+
+def test_samples_without_detections_still_say_none_found(engine, con):
+    """Cumin in the last two days: 4 samples, 0 detections → 'none found' is true."""
+    n = con.execute(f"""SELECT COUNT(DISTINCT "كود العينة") FROM chemistry_tidy
+        WHERE "اسم العينة" IN {CUMIN} AND {DATE} >= {ANCHOR} - INTERVAL 2 day""").fetchone()[0]
+    text, _ = engine.process("ما هي المبيدات في الكمون آخر يومين")[:2]
+    assert n == 4 and "لا توجد عينات في البيانات تطابق" not in text
