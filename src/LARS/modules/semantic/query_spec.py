@@ -22,6 +22,7 @@ class Metric(str, Enum):
     above_limit_rate = "above_limit_rate"
     top_pesticides = "top_pesticides"
     pesticide_list = "pesticide_list"
+    never_detected_list = "never_detected_list"  # detected somewhere in the data, never within the filters
 
 
 class Scope(str, Enum):
@@ -125,6 +126,7 @@ class QuerySpec(_Strict):
     group_by: Optional[GroupBy] = None
     top_n: int = Field(default=5, ge=1, le=50)
     sort: Sort = Sort.desc
+    mrl_multiple: Optional[float] = Field(default=None, ge=1, le=1000)  # "أكثر من ضعف الحد": 2
     unsupported: bool = False
     reason: Optional[str] = None
 
@@ -132,4 +134,12 @@ class QuerySpec(_Strict):
     def _unsupported_needs_reason(self):
         if self.unsupported and not (self.reason or "").strip():
             raise ValueError("unsupported=true needs a reason")
+        if self.mrl_multiple is not None and self.metric not in ABOVE_LIMIT_METRICS:
+            raise ValueError("mrl_multiple applies only to above-limit metrics")
         return self
+
+
+ABOVE_LIMIT_METRICS = {Metric.above_limit_sample_count, Metric.above_limit_rate}
+RATE_METRICS = {Metric.noncompliance_rate, Metric.above_limit_rate}
+COUNT_METRICS = {Metric.sample_count, Metric.noncompliant_count, Metric.above_limit_sample_count}
+ANALYTE_METRICS = {Metric.top_pesticides, Metric.pesticide_list, Metric.never_detected_list}

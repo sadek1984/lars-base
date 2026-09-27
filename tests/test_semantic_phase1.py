@@ -135,6 +135,7 @@ def test_spec_defaults():
     {"metric": "sample_count", "period": {"type": "none", "month": 3}},
     {"metric": "sample_count", "period": {"type": "range", "start": "2026-03-31", "end": "2026-01-01"}},
     {"metric": "top_pesticides", "top_n": 0},
+    {"metric": "noncompliant_count", "mrl_multiple": 2},                             # multiple only for above-limit
 ])
 def test_spec_rejects(bad):
     with pytest.raises(ValidationError):
