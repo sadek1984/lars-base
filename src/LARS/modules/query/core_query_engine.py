@@ -62,7 +62,7 @@ from modules.query.advanced_handlers import AdvancedHandlersMixin
 from modules.query.entity_detection import EntityDetectionMixin
 from modules.query.entity_resolver import EntityResolver
 from modules.query.messages import (CANNOT_COMPUTE_RATE_MESSAGE, EU_MRL_COUNT_LABEL,
-                                    POLITE_ERROR_MESSAGE, eu_mrl_markdown)
+                                    MULTI_MONTH_MESSAGE, POLITE_ERROR_MESSAGE, eu_mrl_markdown)
 from modules.query.text_norm import compliance_intent
 
 
@@ -556,6 +556,9 @@ class CoreQueryEngine(
         # never drop it and answer over the whole dataset.
         if ctx.get('period_unresolved'):
             return self._unresolved_period_message(), None
+        # Two or more months named: the month filter would keep only the first.
+        if ctx.get('multi_month'):
+            return MULTI_MONTH_MESSAGE, None
 
         # ── Tier 0: Explicit compliance-status override ──────────────────────
         # Official lab verdict (sample_result) keywords — "غير مطابقة" / "راسبة" /
@@ -573,6 +576,10 @@ class CoreQueryEngine(
         # Rate breakdowns by municipality / neighborhood / month must win over the
         # compliance override below, which matches 'المطابقة' in e.g. D011/D019.
         result = self._dispatch_rate_breakdown(ctx)
+        # "Top N pesticides" (overall / in non-compliant samples) — before the
+        # compliance override, which would answer with the compliance table.
+        if result is None:
+            result = self._dispatch_top_pesticides(ctx)
 
         # With a named pesticide ("عينات الطماطم غير المطابقة بسبب البايفنثرين")
         # the official-verdict filter applies to the samples containing that

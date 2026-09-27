@@ -217,4 +217,6 @@ class EntityDetectionMixin:
             # A relative-period phrase ("خلال الأشهر الأخيرة") that did not parse:
             # answering over all dates would silently broaden the question.
             'period_unresolved': detected_period is None and has_period_phrase(query),
+            # "من يناير إلى مارس": month ranges are not supported yet; refused.
+            'multi_month': len(self._months_mentioned(query)) >= 2,
         }

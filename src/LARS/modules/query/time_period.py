@@ -13,7 +13,7 @@ from typing import Optional, Tuple
 
 import pandas as pd
 
-from modules.query.text_norm import norm, parse_period
+from modules.query.text_norm import _strip_clitics, norm, parse_period, tokens
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Time-period detection helpers (module-level constants)
@@ -62,6 +62,21 @@ class TimePeriodMixin:
             if norm(month_name) in q:
                 return f'AND date_part(\'month\', strptime("التاريخ", \'%d/%m/%Y\')) = {month_num}'
         return None
+
+    def _months_mentioned(self, query: str) -> set:
+        """Distinct calendar months named in the query, matched by whole word
+        (clitics و/ب/ل/ال stripped) so a month name inside another word never
+        counts. Two or more months ("من يناير إلى مارس", "يناير وفبراير") are
+        refused upstream: _detect_absolute_month keeps only the first, which
+        would silently answer for one month."""
+        months = {norm(name): num for name, num in _ARABIC_MONTHS.items()}
+        found = set()
+        for t in tokens(query):
+            for form in (t, _strip_clitics(t), t[1:] if t[:1] in "وبل" else t):
+                if form in months:
+                    found.add(months[form])
+                    break
+        return found
 
     def _get_anchor_date(self):
         """Latest sample date actually present in chemistry_tidy — the same

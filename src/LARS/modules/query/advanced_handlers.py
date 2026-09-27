@@ -505,6 +505,121 @@ class AdvancedHandlersMixin:
         response += df.to_markdown(index=False)
         return response, df
 
+    # ──────────────────────────────────────────────────────────────────────
+    # Top N pesticides — Batch 5a
+    # ──────────────────────────────────────────────────────────────────────
+    TOP_PESTICIDE_COLUMN_LABELS = {
+        "pesticide": "المبيد",
+        "samples_detected": "اكتُشف في (عينة)",
+        "samples_above_limit": "تجاوزت الحد الأقصى الأوروبي (EU MRL) (عينة)",
+    }
+
+    def _handle_top_pesticides(self, ctx: dict, scope: str, n: int) -> Tuple[str, pd.DataFrame]:
+        """Top N pesticides over a scope of samples.
+
+        scope 'all'           → every sample matching the filters, ranked by
+                                samples_detected, then samples_above_limit.
+        scope 'non_compliant' → samples whose official verdict (sample_result,
+                                as stored) is Non-Compliant, ranked by
+                                samples_above_limit, then samples_detected.
+        Both counts are distinct samples; ties break on pesticide name.
+        Filters (all optional): the report handler's period fragment, exact
+        products, stored category, municipality. Spelling variants of one
+        pesticide are merged with canonical_pesticide().
+        """
+        from modules.query.entity_resolver import canonical_pesticide
+        resolution = ctx.get("resolution")
+        products = list(resolution.products) if resolution is not None else list(ctx["detected_samples"])
+        categories = list(resolution.categories) if resolution is not None else []
+        municipalities = list(resolution.municipalities) if resolution is not None else []
+
+        # "المكسرات" is both the category Nuts and a legacy product phrase for
+        # 'Mixed Nuts'. When the category word itself was consumed as a product,
+        # the category is what was asked for; products named separately stay.
+        if resolution is not None and categories and products:
+            words = ctx["query"].split()
+            cat_positions = {i for term in resolution.category_terms
+                             for i, w in enumerate(words) if w == term}
+            if cat_positions and cat_positions <= set(resolution.consumed):
+                other = [i for i in resolution.consumed if i not in cat_positions]
+                if not other:
+                    products = []
+
+        where, params, parts = ["1=1"], [], []
+        if products:
+            sql, p = self._in_clause("اسم العينة", products)
+            where.append(sql); params += p
+            parts.append(" + ".join(products))
+        elif categories:
+            sql, p, label = self._category_or_samples_filter(categories[0], [])
+            if sql is None:
+                return f"⚠️ فئة غير معروفة في البيانات: {categories[0]}", pd.DataFrame()
+            where.append(sql); params += p
+            parts.append(label)
+        if municipalities:
+            sql, p = self._in_clause("اسم البلدية", municipalities)
+            where.append(sql); params += p
+            parts.append(" + ".join(municipalities))
+        period_sql = ctx.get("detected_period") or ""
+        period_label = ctx.get("detected_period_label") or self._month_label(ctx["query"])
+        if period_label:
+            parts.append(period_label)
+        if scope == "non_compliant":
+            where.append("sample_result = 'Non-Compliant'")
+
+        where_sql = " AND ".join(where) + (f" {period_sql}" if period_sql else "")
+        scope_name = "العينات غير المطابقة" if scope == "non_compliant" else "جميع العينات"
+        filters_txt = "، ".join(parts)
+        heading = f"{scope_name}{' — ' + filters_txt if filters_txt else ''}"
+
+        con = self._get_connection()
+        total = con.execute(
+            f'SELECT COUNT(DISTINCT "كود العينة") FROM chemistry_tidy WHERE {where_sql}', params
+        ).fetchone()[0]
+        empty = pd.DataFrame(columns=["pesticide", "samples_detected", "samples_above_limit"])
+        if not total:
+            con.close()
+            kind = "عينات غير مطابقة" if scope == "non_compliant" else "عينات"
+            return (f"⚠️ لا توجد {kind} ضمن: {filters_txt or 'البيانات الحالية'}. "
+                    f"لذلك لا يمكن ترتيب المبيدات لهذا النطاق."), empty
+        rows = con.execute(f"""
+            SELECT "كود العينة" AS code, pesticide_name, is_above_limit
+            FROM chemistry_tidy
+            WHERE {where_sql}
+              AND is_detected = 1 AND pesticide_name NOT IN ('NO DETECTION', 'NO DATA')
+        """, params).df()
+        con.close()
+        if rows.empty:
+            return f"📊 **{heading}: {total} عينة**\n\nلم يُكتشف أي مبيد في هذه العينات.", empty
+
+        rows["pesticide"] = rows["pesticide_name"].map(canonical_pesticide)
+        detected = rows.groupby("pesticide")["code"].nunique()
+        above = rows[rows["is_above_limit"] == 1].groupby("pesticide")["code"].nunique()
+        df = pd.DataFrame({"samples_detected": detected,
+                           "samples_above_limit": above}).fillna(0).astype(int).reset_index()
+        keys = (["samples_detected", "samples_above_limit"] if scope == "all"
+                else ["samples_above_limit", "samples_detected"])
+        df = df.sort_values(keys + ["pesticide"], ascending=[False, False, True], kind="stable")
+        df = df.head(n).reset_index(drop=True)
+
+        response = f"📊 **{heading}: {total} عينة**\n\n"
+        response += f"أكثر {len(df)} مبيدات "
+        response += ("ظهوراً" if scope == "all" else "تجاوزاً للحد الأقصى الأوروبي في هذه العينات") + ":\n\n"
+        response += df.rename(columns=self.TOP_PESTICIDE_COLUMN_LABELS).to_markdown(index=False)
+        response += ("\n\n*اكتُشف في = عدد العينات التي رُصد فيها المبيد. "
+                     "تجاوزت الحد الأقصى الأوروبي = عدد العينات التي تجاوز فيها الحد الأقصى الأوروبي (EU MRL)، "
+                     "وهي مقارنة مرجعية وليست الحكم الرسمي للمختبر.*")
+        return response, df
+
+    def _month_label(self, query: str) -> Optional[str]:
+        """Arabic month name for an absolute-month filter ("في مارس" → "مارس")."""
+        from modules.query.time_period import _ARABIC_MONTHS
+        months = self._months_mentioned(query)
+        if len(months) != 1:
+            return None
+        num = next(iter(months))
+        return next(name for name, m in _ARABIC_MONTHS.items() if m == num)
+
     def _handle_headline_totals(self, date_filter: Optional[str] = None) -> Tuple[str, pd.DataFrame]:
         """Dataset-wide totals: unique samples, test records, official verdicts. D002."""
         con = self._get_connection()

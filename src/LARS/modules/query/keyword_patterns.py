@@ -11,7 +11,7 @@ engine state (self._get_connection(), detection helpers, handlers) via self.
 import re
 from typing import Optional, Tuple
 
-from modules.query.text_norm import COUNT_NOUNS, count_for_nouns, norm, number_value, tokens
+from modules.query.text_norm import COUNT_NOUNS, compliance_intent, count_for_nouns, norm, number_value, tokens
 
 import pandas as pd
 
@@ -33,6 +33,41 @@ class KeywordPatternsMixin:
         counts = count_for_nouns(query, COUNT_NOUNS["pesticides"] | COUNT_NOUNS["places"]
                                  | COUNT_NOUNS["products"])
         return counts[0] if counts else default
+
+    # "Top N pesticides" phrasings (normalized text). "أكثر من N مبيدات" means
+    # "more than N pesticides" (a per-sample count) and is not a ranking.
+    _PEST = r"(?:مبيد|مبيدات|المبيدات)"
+    _TOP_PESTICIDE_PATTERNS = (
+        re.compile(r"ترتيب\s+المبيدات"),
+        re.compile(r"(?:^|\s)(?:اكثر|الاكثر)\s+(?!من\s)(?:\S+\s+)?" + _PEST + r"(?:\s|$|؟)"),
+        re.compile(_PEST + r"\s+الاكثر\s+(?:ظهورا|تكرارا|شيوعا|انتشارا)"),
+        re.compile(_PEST + r"\s+(?:التي|اللي)\s+سببت\s+عدم\s+المطابقه"),
+    )
+    _PESTICIDES_IN_SAMPLES = re.compile(_PEST + r"\s+(?:اللي\s+)?في\s+العينات")
+
+    def _dispatch_top_pesticides(self, ctx: dict) -> Optional[Tuple[str, Optional[pd.DataFrame]]]:
+        """Top N pesticides overall or in non-compliant samples (Batch 5a).
+        Runs before the Tier-0 compliance override and the router's
+        N-pesticides intent, which would otherwise take "أكثر ٥ مبيدات في
+        العينات غير المطابقة" as "samples with 5 pesticides". Returns None
+        when a specific pesticide is named (e.g. A023), or for a "compliant
+        samples" scope, which is not defined."""
+        query = ctx['query']
+        if ctx['detected_pesticide']:
+            return None
+        q = norm(query)
+        verdict = compliance_intent(query)
+        ranking = any(p.search(q) for p in self._TOP_PESTICIDE_PATTERNS) or (
+            verdict == 'non_compliant' and bool(self._PESTICIDES_IN_SAMPLES.search(q)))
+        # "عدم المطابقة" means non-compliance; the shared compliance_intent reads
+        # it as 'compliant' ("عدم" is not in its negator list), so check it here.
+        non_compliant = verdict == 'non_compliant' or 'عدم المطابقه' in q
+        if not ranking or (verdict == 'compliant' and not non_compliant):
+            return None
+        scope = 'non_compliant' if non_compliant else 'all'
+        counts = count_for_nouns(query, COUNT_NOUNS["pesticides"])
+        n = counts[0] if counts else self._top_n(query, default=5)
+        return self._handle_top_pesticides(ctx, scope, max(1, min(int(n), 50)))
 
     def _dispatch_rate_breakdown(self, ctx: dict) -> Optional[Tuple[str, Optional[pd.DataFrame]]]:
         """Rate / performance questions broken down by municipality, neighborhood
