@@ -62,7 +62,8 @@ from modules.query.advanced_handlers import AdvancedHandlersMixin
 from modules.query.entity_detection import EntityDetectionMixin
 from modules.query.entity_resolver import EntityResolver
 from modules.query.messages import (CANNOT_COMPUTE_RATE_MESSAGE, EU_MRL_COUNT_LABEL,
-                                    MULTI_MONTH_MESSAGE, POLITE_ERROR_MESSAGE, eu_mrl_markdown)
+                                    CATEGORY_UNSUPPORTED_MESSAGE, MULTI_MONTH_MESSAGE,
+                                    POLITE_ERROR_MESSAGE, eu_mrl_markdown)
 from modules.query.text_norm import compliance_intent
 
 
@@ -509,22 +510,17 @@ class CoreQueryEngine(
         """An empty result is only "none found" if the question's own filters
         match samples. When they match none (e.g. a product/category/place in
         a period with no samples), say that instead of "no pesticides found".
-        Filters mirror the handlers: exact products, else the stored category;
-        municipalities; facilities; neighborhoods (LIKE, hamza variants);
-        the period fragment. No filters → nothing to check."""
+        Filters mirror the handlers: exact products, municipalities,
+        facilities, neighborhoods (LIKE, hamza variants), the period
+        fragment. No filters → nothing to check."""
         if df is None or not df.empty:
             return response_text, df
         res = ctx.get("resolution")
-        products, categories = self._products_and_categories(ctx)
+        products, _ = self._products_and_categories(ctx)
         where, params, labels = [], [], []
         if products:
             sql, p = self._in_clause("اسم العينة", products)
             where.append(sql); params += p; labels.append(" + ".join(products))
-        elif categories or ctx.get("category_key"):
-            cat = categories[0] if categories else ctx["category_key"]
-            sql, p, label = self._category_or_samples_filter(cat, [])
-            if sql:
-                where.append(sql); params += p; labels.append(label)
         for column, values in (("اسم البلدية", getattr(res, "municipalities", [])),
                                ("اسم المنشاة", getattr(res, "facilities", []))):
             if values:
@@ -604,6 +600,12 @@ class CoreQueryEngine(
         # Two or more months named: the month filter would keep only the first.
         if ctx.get('multi_month'):
             return MULTI_MONTH_MESSAGE, None
+        # Category-level questions (مكسرات، خضروات، فواكه، توابل …) are not
+        # supported: no handler receives a category. A product named alongside
+        # a category word still answers for that product.
+        products, categories = self._products_and_categories(ctx)
+        if categories and not products:
+            return CATEGORY_UNSUPPORTED_MESSAGE, None
 
         # ── Tier 0: Explicit compliance-status override ──────────────────────
         # Official lab verdict (sample_result) keywords — "غير مطابقة" / "راسبة" /

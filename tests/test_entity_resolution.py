@@ -119,47 +119,32 @@ def test_A010_acetamiprid_in_sweet_green_pepper(engine, bank, con):
     assert len(df) == expected
 
 
-def test_A021_vegetables_with_bifenthrin(engine, bank, con):
-    _, df = ask(engine, bank, "A021")
-    expected = scalar(con, f"""SELECT count(DISTINCT "اسم العينة") FROM chemistry_tidy WHERE {D}
-        AND regexp_matches(lower(pesticide_name), 'bifenth') AND "نوع العينة" = 'Vegetables'""")
-    assert expected == 7
-    assert df["sample_name"].nunique() == expected
+def test_A021_vegetables_with_bifenthrin(engine, bank):
+    """A021 names a category. Category-level questions are refused (not supported)."""
+    from modules.query.messages import CATEGORY_UNSUPPORTED_MESSAGE
+    text, df = engine.process(bank["A021"])[:2]
+    assert text == CATEGORY_UNSUPPORTED_MESSAGE and df is None
 
 
-def test_A023_spices_with_carbendazim(engine, bank, con):
-    _, df = ask(engine, bank, "A023")
-    expected = scalar(con, f"""SELECT count(DISTINCT "اسم العينة") FROM chemistry_tidy WHERE {D}
-        AND regexp_matches(lower(pesticide_name), 'carbend') AND "نوع العينة" = 'Spices'""")
-    assert expected == 11
-    assert df["sample_name"].nunique() == expected
+def test_A023_spices_with_carbendazim(engine, bank):
+    """A023 names a category. Category-level questions are refused (not supported)."""
+    from modules.query.messages import CATEGORY_UNSUPPORTED_MESSAGE
+    text, df = engine.process(bank["A023"])[:2]
+    assert text == CATEGORY_UNSUPPORTED_MESSAGE and df is None
 
 
-def test_A040_pesticides_never_detected_in_fruits(engine, bank, con):
-    """NOTE: zero_row_audit.csv recorded 153 (raw spellings) / ~78 'merged'. That
-    78 used a crude 6-character-prefix merge AND a 'detected anywhere' universe.
-    The handler's universe is every *tested* pesticide, merged with the
-    codebase's own PESTICIDE_VARIANTS map; the expected value below is
-    recomputed with exactly that map, independently of the handler."""
-    from modules.query.mappings import PESTICIDE_VARIANTS
-    canon = {v.lower(): k for k, vs in PESTICIDE_VARIANTS.items() for v in vs}
-    c = lambda p: canon.get(p.lower(), p.lower())
-    tested = {c(r[0]) for r in con.execute(
-        "SELECT DISTINCT pesticide_name FROM chemistry_tidy WHERE pesticide_name NOT IN ('NO DETECTION','NO DATA')").fetchall()}
-    in_fruit = {c(r[0]) for r in con.execute(
-        f"""SELECT DISTINCT pesticide_name FROM chemistry_tidy WHERE {D} AND "نوع العينة" = 'Fruits'""").fetchall()}
-    expected = len(tested - in_fruit)
-    assert expected == 145
-    _, df = ask(engine, bank, "A040")
-    assert len(df) == expected
+def test_A040_pesticides_never_detected_in_fruits(engine, bank):
+    """A040 names a category. Category-level questions are refused (not supported)."""
+    from modules.query.messages import CATEGORY_UNSUPPORTED_MESSAGE
+    text, df = engine.process(bank["A040"])[:2]
+    assert text == CATEGORY_UNSUPPORTED_MESSAGE and df is None
 
 
-def test_B022_spice_pesticides_above_below(engine, bank, con):
-    _, df = ask(engine, bank, "B022")
-    expected = scalar(con, f"""SELECT count(*) FROM (SELECT 1 FROM chemistry_tidy WHERE {D}
-        AND "نوع العينة" = 'Spices' GROUP BY "نوع الاختبار", pesticide_name)""")
-    assert expected == 162
-    assert len(df) == expected
+def test_B022_spice_pesticides_above_below(engine, bank):
+    """B022 names a category. Category-level questions are refused (not supported)."""
+    from modules.query.messages import CATEGORY_UNSUPPORTED_MESSAGE
+    text, df = engine.process(bank["B022"])[:2]
+    assert text == CATEGORY_UNSUPPORTED_MESSAGE and df is None
 
 
 def test_B009_failed_pepper_samples(engine, bank, con):

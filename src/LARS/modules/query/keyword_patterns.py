@@ -44,11 +44,6 @@ class KeywordPatternsMixin:
         re.compile(_PEST + r"\s+(?:التي|اللي)\s+سببت\s+عدم\s+المطابقه"),
     )
     _PESTICIDES_IN_SAMPLES = re.compile(_PEST + r"\s+(?:اللي\s+)?في\s+العينات")
-    # "ما هي / ما / وش المبيدات (الموجودة|التي ظهرت|اللي) في <فئة>" — a list, not a count.
-    _PESTICIDE_LIST = re.compile(
-        r"(?:^|\s)(?:(?:ما\s+هي|ماهي|ما|وش|اعرض|اعطني|عطني)\s+)?(?:ال)?مبيدات\s+"
-        r"(?:(?:الموجوده|الموجود|التي\s+ظهرت|اللي\s+ظهرت|اللي|المكتشفه)\s+)?في\s")
-    _NOT_A_LIST = {"عدد", "متوسط", "نسبه", "توزيع", "مقابل", "قارن", "لم", "فوق", "تحت"}
 
     def _dispatch_top_pesticides(self, ctx: dict) -> Optional[Tuple[str, Optional[pd.DataFrame]]]:
         """Top N pesticides overall or in non-compliant samples (Batch 5a).
@@ -68,13 +63,6 @@ class KeywordPatternsMixin:
         # it as 'compliant' ("عدم" is not in its negator list), so check it here.
         non_compliant = verdict == 'non_compliant' or 'عدم المطابقه' in q
         if not ranking:
-            # Category list: "ما هي المبيدات الموجودة في المكسرات" → every
-            # pesticide in that category (scope all, no top-N cut).
-            products, categories = self._products_and_categories(ctx)
-            if (categories and not products and verdict is None
-                    and self._PESTICIDE_LIST.search(q)
-                    and not (set(tokens(query)) & self._NOT_A_LIST)):
-                return self._handle_top_pesticides(ctx, 'all', None)
             return None
         if verdict == 'compliant' and not non_compliant:
             return None
@@ -610,8 +598,7 @@ class KeywordPatternsMixin:
         }
         _cat_key_process = None
         if resolution is not None:
-            # Resolved DB category ('Spices'); the handlers filter "نوع العينة" = ?
-            _cat_key_process = resolution.categories[0] if resolution.categories else None
+            _cat_key_process = None   # category questions are refused in process()
         else:
             for kw, cat in _cat_en_map.items():
                 if kw in query_lower:
@@ -753,8 +740,6 @@ class KeywordPatternsMixin:
             return self._handle_top_n_by_metric('facility', 'count', 10)
 
         # Pattern A040: pesticides never detected in a category
-        if ('لم تظهر' in query or 'لم يظهر' in query) and resolution is not None and resolution.categories:
-            return self._handle_never_detected_in_category(resolution.categories[0])
         if resolution is None and 'لم تظهر إطلاقاً' in query and 'فواكه' in query:
             return self._handle_never_detected_in_category('fruit')
 

@@ -76,24 +76,23 @@ def test_E001_stats_combine_every_spelling(engine, bank, con):
         == (n, pytest.approx(lo), pytest.approx(hi))
 
 
-def test_E007_stats_scoped_to_spices(engine, bank, con):
+def test_E007_stats_scoped_to_spices(engine, bank):
+    """E007 asks about spices (a category). Category-level questions are refused (not supported)."""
+    from modules.query.messages import CATEGORY_UNSUPPORTED_MESSAGE
     text, df = engine.process(bank["E007"])[:2]
-    n, sd = rows(con, """SELECT COUNT(*), ROUND(STDDEV_SAMP(concentration), 4) FROM chemistry_tidy
-        WHERE is_detected = 1 AND lower(pesticide_name) LIKE 'carbend%' AND "نوع العينة" = 'Spices'""")[0]
-    assert int(df["detections"].iloc[0]) == n
-    assert df["std_concentration"].iloc[0] == pytest.approx(sd)
-    assert "All sample types" not in text
+    assert text == CATEGORY_UNSUPPORTED_MESSAGE and df is None
 
 
 def test_E007_answer_does_not_depend_on_previous_questions(bank):
-    """Fresh engine per ordering: E007 first, and after other question types."""
+    """Fresh engine per ordering: the question first, and after other question
+    types. Uses E001 (E007 names a category, which is now refused)."""
     from modules.query.core_query_engine import CoreQueryEngine
     answers = set()
     for before in ([], ["E001"], ["D026"], ["A052", "D012", "B040"]):
         e = CoreQueryEngine(db_path=str(DB_PATH))
         for q in before:
             e.process(bank[q])
-        text, df = e.process(bank["E007"])[:2]
+        text, df = e.process(bank["E001"])[:2]
         answers.add((text, df.to_csv(index=False)))
     assert len(answers) == 1
 
@@ -154,9 +153,9 @@ def test_other_processed_merges_unchanged(engine):
     assert engine._get_resolver().resolve("عينات الفستق").products == ["Pistachio Powder", "Pistachios"]
 
 
-def test_E016_compares_both_categories(engine, bank, con):
-    _, df = engine.process(bank["E016"])[:2]
-    expected = rows(con, """SELECT "نوع العينة", COUNT(*), ROUND(AVG(concentration), 4) FROM chemistry_tidy
-        WHERE is_detected = 1 AND lower(pesticide_name) LIKE 'carbend%'
-          AND "نوع العينة" IN ('Spices', 'Vegetables') GROUP BY 1 ORDER BY 1""")
-    assert list(zip(df["detections"], df["avg_concentration"])) == [(n, pytest.approx(a)) for _, n, a in expected]
+def test_E016_compares_both_categories(engine, bank):
+    """E016 compares two categories. Category-level questions are refused (not supported)."""
+    from modules.query.messages import CATEGORY_UNSUPPORTED_MESSAGE
+    text, df = engine.process(bank["E016"])[:2]
+    assert text == CATEGORY_UNSUPPORTED_MESSAGE and df is None
+

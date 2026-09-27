@@ -515,10 +515,10 @@ class AdvancedHandlersMixin:
     }
 
     def _products_and_categories(self, ctx: dict) -> Tuple[List[str], List[str]]:
-        """Resolved (products, categories), where a category word that the
-        resolver ALSO read as a legacy product phrase counts as the category:
-        "المكسرات" is the category Nuts, not the product 'Mixed Nuts' (1 sample,
-        0 detections). Products the user named separately are kept."""
+        """Resolved (products, categories). A category word that the resolver
+        ALSO read as a legacy product phrase ("المكسرات" → 'Mixed Nuts') counts
+        as the category, not a product. Categories are only used to refuse
+        category-level questions in process(); products named separately stay."""
         resolution = ctx.get("resolution")
         if resolution is None:
             return list(ctx["detected_samples"]), []
@@ -541,15 +541,16 @@ class AdvancedHandlersMixin:
                                 as stored) is Non-Compliant, ranked by
                                 samples_above_limit, then samples_detected.
         Both counts are distinct samples; ties break on pesticide name.
-        n=None lists every pesticide (category list questions).
+        n=None lists every pesticide.
 
         Filters (all optional): the report handler's period fragment, exact
-        products, stored category, municipality. Spelling variants of one
+        products, municipality (categories are not supported and are refused
+        upstream in process()). Spelling variants of one
         pesticide are merged with canonical_pesticide().
         """
         from modules.query.entity_resolver import canonical_pesticide
         resolution = ctx.get("resolution")
-        products, categories = self._products_and_categories(ctx)
+        products, _ = self._products_and_categories(ctx)
         municipalities = list(resolution.municipalities) if resolution is not None else []
 
         where, params, parts = ["1=1"], [], []
@@ -557,12 +558,6 @@ class AdvancedHandlersMixin:
             sql, p = self._in_clause("اسم العينة", products)
             where.append(sql); params += p
             parts.append(" + ".join(products))
-        elif categories:
-            sql, p, label = self._category_or_samples_filter(categories[0], [])
-            if sql is None:
-                return f"⚠️ فئة غير معروفة في البيانات: {categories[0]}", pd.DataFrame()
-            where.append(sql); params += p
-            parts.append(label)
         if municipalities:
             sql, p = self._in_clause("اسم البلدية", municipalities)
             where.append(sql); params += p

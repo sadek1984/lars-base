@@ -36,18 +36,26 @@ EXAMPLES = [
      f"{DATE} >= {ANCHOR} - INTERVAL 2 month"),
     ("أكثر 5 مبيدات ظهوراً في العينات غير المطابقة في آخر 3 شهور", "nc", 5,
      f"{DATE} >= {ANCHOR} - INTERVAL 3 month"),
-    ("وش المبيدات اللي في العينات اللي ما طابقت في الخضروات؟", "nc", 5, "\"نوع العينة\" = 'Vegetables'"),
     ("ما المبيدات التي سببت عدم المطابقة في الكمون؟", "nc", 5, f"\"اسم العينة\" IN {CUMIN}"),
     ("أكثر 3 مبيدات في العينات غير المطابقة في بلدية شرق بريدة", "nc", 3,
      "\"اسم البلدية\" = 'بلدية شرق بريدة'"),
-    ("ما هي المبيدات الأكثر ظهوراً في الخضروات؟", "all", 5, "\"نوع العينة\" = 'Vegetables'"),
-    ("ما هي المبيدات الأكثر ظهوراً في المكسرات؟", "all", 5, "\"نوع العينة\" = 'Nuts'"),
-    ("أكثر 10 مبيدات ظهوراً في الفواكه في مارس", "all", 10,
-     f"\"نوع العينة\" = 'Fruits' AND date_part('month', {DATE}) = 3"),
     ("ترتيب المبيدات حسب التكرار", "all", 5, "1=1"),
-    # bank questions of this intent that were answered wrongly before (approved)
-    ("ما هي أكثر ١٠ مبيدات تكراراً في التوابل؟", "all", 10, "\"نوع العينة\" = 'Spices'"),
-    ("ما هي أكثر ٥ مبيدات تكراراً في الخضراوات؟", "all", 5, "\"نوع العينة\" = 'Vegetables'"),
+]
+
+
+# Category-level questions are not supported: they get the honest refusal.
+CATEGORY_QUESTIONS = [
+    "وش المبيدات اللي في العينات اللي ما طابقت في الخضروات؟",
+    "ما هي المبيدات الأكثر ظهوراً في الخضروات؟",
+    "ما هي المبيدات الأكثر ظهوراً في المكسرات؟",
+    "أكثر 10 مبيدات ظهوراً في الفواكه في مارس",
+    "ما هي أكثر ١٠ مبيدات تكراراً في التوابل؟",      # A038
+    "ما هي أكثر ٥ مبيدات تكراراً في الخضراوات؟",     # A039
+    "المبيدات الموجودة في المكسرات",
+    "ما هي المبيدات في الخضروات؟",
+    "ما هي المبيدات التي ظهرت في الفواكه؟",
+    "وش المبيدات اللي في التوابل؟",
+    "كم عدد العينات غير المطابقة في المكسرات؟",
 ]
 
 
@@ -101,13 +109,6 @@ def test_ranking_matches_independent_sql(engine, con, q, scope, n, where):
     assert f": {total} عينة" in text.splitlines()[0]
     got = list(df[["pesticide", "samples_detected", "samples_above_limit"]].itertuples(index=False, name=None))
     assert got == rows
-
-
-def test_nuts_resolve_to_the_category_not_mixed_nuts(engine, con):
-    text, df = engine.process("ما هي المبيدات الأكثر ظهوراً في المكسرات؟")[:2]
-    assert "Mixed Nuts" not in text and len(df) == 5
-    assert con.execute("""SELECT COUNT(*) FROM chemistry_tidy WHERE "نوع العينة" = 'Nuts'
-        AND is_detected = 1""").fetchone()[0] > 0
 
 
 def test_dates_are_raw_varieties_only(engine):
@@ -219,24 +220,21 @@ def test_deterministic(engine):
     assert len(answers) == 1
 
 
-# ── Category pesticide lists (same branch, follow-up) ────────────────────────
+# ── Category questions: refused ──────────────────────────────────────────────
 
-@pytest.mark.parametrize("q, category", [
-    ("المبيدات الموجودة في المكسرات", "Nuts"),
-    ("ما هي المبيدات في الخضروات؟", "Vegetables"),
-    ("ما هي المبيدات التي ظهرت في الفواكه؟", "Fruits"),
-    ("وش المبيدات اللي في التوابل؟", "Spices"),
-])
-def test_category_list_matches_sql(engine, con, q, category):
-    """Every pesticide in the category, not just a top N, and never
-    'no pesticides found' (nuts used to resolve to 'Mixed Nuts')."""
-    where = f"\"نوع العينة\" = '{category}'"
-    total, rows = expected(con, "all", 1000, where)
+@pytest.mark.parametrize("q", CATEGORY_QUESTIONS)
+def test_category_questions_are_refused(engine, q):
+    from modules.query.messages import CATEGORY_UNSUPPORTED_MESSAGE
     text, df = engine.process(q)[:2]
-    assert f": {total} عينة" in text.splitlines()[0]
-    got = list(df[["pesticide", "samples_detected", "samples_above_limit"]].itertuples(index=False, name=None))
-    assert got == rows and len(got) > 0
-    assert "No pesticides found" not in text and "Mixed Nuts" not in text
+    assert text == CATEGORY_UNSUPPORTED_MESSAGE and df is None
+
+
+@pytest.mark.parametrize("q, product", [("المبيدات الموجودة في الفستق", "Pistachios"),
+                                        ("ما هي المبيدات الأكثر ظهوراً في الكمون؟", "Cumin"),
+                                        ("كم عدد العينات غير المطابقة في الفستق؟", "Pistachios")])
+def test_single_products_still_answer(engine, q, product):
+    text, df = engine.process(q)[:2]
+    assert df is not None and len(df) > 0 and product in text
 
 
 @pytest.mark.parametrize("q", [

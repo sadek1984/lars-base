@@ -256,7 +256,7 @@ class IntentRouter:
             res = resolver.resolve(normalized)
             entities.samples = list(res.products)
             entities.neighborhoods = self._extract_neighborhoods(resolver.mask_consumed(normalized, res))
-            entities.category = res.categories[0] if res.categories else None
+            entities.category = None   # category questions are refused before routing
         else:
             entities.samples = self._extract_samples(normalized)
             entities.neighborhoods = self._extract_neighborhoods(normalized)
