@@ -126,4 +126,5 @@ fi
 echo
 echo "✅ READY — open http://localhost:5173"
 echo "   Use Chrome Incognito and allow the microphone."
+echo "   🎤 Mic: iPhone Continuity Camera OFF; macOS Sound → Input = MacBook/headset; Chrome mic = same device"
 echo "   Stop everything with: $LARS_DIR/scripts/demo_stop.sh"
