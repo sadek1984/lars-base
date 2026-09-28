@@ -52,3 +52,6 @@ phase0/*.log
 .claude/worktrees/
 # semantic layer run log (contains user questions)
 logs/
+
+# Excel exports written by lars_service
+exports/

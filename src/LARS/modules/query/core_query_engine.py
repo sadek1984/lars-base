@@ -126,6 +126,10 @@ class CoreQueryEngine(
         # only after the handlers refuse; in "off" nothing is built at all.
         self._refusal: Optional[str] = None
         self.last_source = "handler"
+        # Read-only record of the last answer, for exports (no effect on answers):
+        # the question context, and the semantic answer when one was served.
+        self.last_context: Optional[dict] = None
+        self.last_semantic = None
         self.semantic_mode, self._semantic = init_semantic(self.db_path)
         self._resolution_cache: Tuple[Optional[str], Any] = (None, None)
         
@@ -489,6 +493,7 @@ class CoreQueryEngine(
         self._handlers_called = []
         self._refusal = None          # why the handlers refused, if they did (per call)
         self.last_source = "handler"
+        self.last_context, self.last_semantic = None, None
         try:
             response_text, df = self._process_unguarded(query)
         except DatabaseUnavailableError as db_err:
@@ -516,7 +521,7 @@ class CoreQueryEngine(
                 return response_text, df
             ans = self._semantic.answer(query, response_text, self._refusal, serve=True)
             if ans is not None:
-                self.last_source = "semantic"
+                self.last_source, self.last_semantic = "semantic", ans
                 return ans.text, ans.df
         except Exception:
             logging.exception(f"Semantic fallback failed: {query!r}")
@@ -720,6 +725,7 @@ class CoreQueryEngine(
         which tier produced the answer.
         """
         ctx = self._extract_context(query)
+        self.last_context = ctx
         query = ctx['query']                      # NormText: normalized `in` matching
         query_normalized = ctx['query_normalized']
         query_lower      = ctx['query_lower']

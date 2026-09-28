@@ -1,7 +1,10 @@
 import os
 import sys
 import logging
-from fastapi import FastAPI
+from urllib.parse import quote
+
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 logging.basicConfig(level=logging.INFO)
@@ -34,6 +37,24 @@ def get_lars_engine():
     return _engine
 class QueryRequest(BaseModel):
     query: str
+
+
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def _with_export(payload: dict, question: str, df, engine=None) -> dict:
+    """Add "file_url" when the answer has a non-empty table (never for a
+    refusal). An export failure is logged and leaves the answer unchanged."""
+    if df is None or not hasattr(df, "empty") or df.empty or payload.get("refusal"):
+        return payload
+    try:
+        from modules.reporting.excel_export import answer_info, write_export
+        info = answer_info(engine, question, payload["answer"], payload["source"])
+        name = write_export(question, df, payload["source"], info)
+        payload["file_url"] = f"/api/lars/export/{quote(name)}"
+    except Exception as e:
+        logger.warning(f"Excel export failed: {e}")
+    return payload
 @app.post("/api/lars/query")
 async def query_lars(request: QueryRequest):
     try:
@@ -57,7 +78,8 @@ async def query_lars(request: QueryRequest):
                 if df.empty:
                     df = get_top(level=level, n=params["top_n"], db_path=db_path)
                 answer = to_voice_summary(df, level)
-                return {"success": True, "answer": answer, "source": "handler"}
+                return _with_export({"success": True, "answer": answer, "source": "handler"},
+                                    request.query, df)
         except Exception as e:
             logger.warning(f"Priority voice shortcut failed, falling back: {e}")
 
@@ -70,10 +92,12 @@ async def query_lars(request: QueryRequest):
             result = engine.ask(request.query)
         else:
             return {"success": False, "answer": "No query method found"}
+        df = None
         if isinstance(result, dict):
             answer = result.get("answer") or result.get("result") or str(result)
         elif isinstance(result, tuple):
             answer = str(result[0])
+            df = result[1] if len(result) > 1 else None
         else:
             answer = str(result)
         # "semantic" when the semantic fallback (LARS_SEMANTIC_MODE=live) answered
@@ -81,10 +105,26 @@ async def query_lars(request: QueryRequest):
         source = getattr(engine, "last_source", "handler")
         # Why the handlers refused (None for an answer), e.g. "period_not_applied".
         refusal = getattr(engine, "_refusal", None) if source == "handler" else None
-        return {"success": True, "answer": answer, "source": source, "refusal": refusal}
+        return _with_export({"success": True, "answer": answer, "source": source, "refusal": refusal},
+                            request.query, df, engine)
     except Exception as e:
         logger.error(f"Query error: {e}")
         return {"success": False, "answer": f"Error: {e}"}
+@app.get("/api/lars/export/{filename}")
+async def get_export(filename: str):
+    """Serve a workbook written by /api/lars/query — only plain *.xlsx names
+    inside the export directory (no "..", no slashes)."""
+    from modules.reporting.excel_export import export_path, valid_export_name
+    if not valid_export_name(filename):
+        raise HTTPException(status_code=400, detail="Invalid export name")
+    path = export_path(filename)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Export not found")
+    ascii_name = path.name.split("_", 1)[0] + ".xlsx"        # "20260928-094116-55d36e.xlsx"
+    disposition = f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(path.name)}"
+    return FileResponse(path, media_type=XLSX, headers={"Content-Disposition": disposition})
+
+
 @app.get("/health")
 async def health():
     # The engine's semantic mode once it is built, else the one it will use.
