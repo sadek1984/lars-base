@@ -370,12 +370,19 @@ def ask_q():
     ("كم عينة طماطم غير مطابقة؟", {"metric": "noncompliant_count"}),
     ("كم عينة غير مطابقة في بلدية الرس؟", {"metric": "noncompliant_count"}),
     ("كم عينة فيها الكاربندازيم؟", {"metric": "sample_count"}),
-    ("كم عينة في آخر 3 أشهر؟", {"metric": "sample_count"}),
+    ("كم عينة في الأشهر الأخيرة؟", {"metric": "sample_count"}),      # period too vague to repair
     ("كم عينة في مارس؟", {"metric": "sample_count"}),
 ])
 def test_coverage_refuses_a_dropped_filter(ask_q, q, spec):
     a = ask_q(q, spec)
     assert not a.ok and "coverage" in a.text
+
+
+def test_coverage_repairs_a_dropped_relative_period(ask_q):
+    # narrowing only: the question's own unambiguous period (1,149 samples in 3 months)
+    a = ask_q("كم عينة في آخر 3 أشهر؟", {"metric": "sample_count"})
+    assert a.ok and a.resolved.added_from_question == ("period: 3 month",)
+    assert "النتيجة: 1,149 عينة" in a.text
 
 
 @pytest.mark.parametrize("q, spec", [

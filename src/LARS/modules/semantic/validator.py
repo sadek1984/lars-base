@@ -10,10 +10,11 @@ from datetime import date
 from typing import Dict, List, Optional, Tuple
 
 from modules.query.mappings import PESTICIDE_AR_TO_EN_NORM, normalize_neighborhood
-from modules.query.text_norm import _strip_clitics, has_period_phrase, norm, tokens
+from modules.query.text_norm import (_strip_clitics, count_for_nouns, has_period_phrase, named_years, norm,
+                                     parse_period, tokens)
 from modules.semantic.catalog import Catalog
 from modules.semantic.query_spec import (
-    ANALYTE_METRICS, RATE_METRICS, GroupBy, Metric, QuerySpec, Scope,
+    ANALYTE_METRICS, RATE_METRICS, GroupBy, Metric, Period, QuerySpec, Scope,
 )
 from modules.semantic.tables import category_key
 
@@ -36,7 +37,7 @@ class ResolvedSpec:
     period: Optional[Tuple[date, date]] = None
     terms: Dict[str, List[str]] = field(default_factory=dict)  # filter -> words as asked
     highlight: Optional[str] = None               # "X compared with all": the one value of the grouped dimension
-    added_from_question: Tuple[str, ...] = ()     # categories the coverage check added
+    added_from_question: Tuple[str, ...] = ()     # what the coverage check added (categories, period, top_n)
 
     @property
     def mentions_category(self) -> bool:
@@ -197,12 +198,44 @@ def _question_categories(question: str, catalog: Catalog) -> set:
     return found
 
 
+_RANKED_NOUNS = {GroupBy.neighborhood: {"حي", "احياء"}, GroupBy.municipality: {"بلديه", "بلديات"},
+                 GroupBy.product: {"منتج", "منتجات", "صنف", "اصناف"}}
+
+
+def _repair_period_and_top_n(question: str, r: ResolvedSpec, catalog: Catalog,
+                             relative_only: bool) -> ResolvedSpec:
+    """Gemini drops the period and top_n of rankings ("أخطر 5 أحياء … في آخر
+    شهرين" → just metric + group_by). Put back what the question states."""
+    update, added = {}, []
+    parsed = parse_period(question) if relative_only and r.period is None else None
+    if parsed:
+        try:
+            update["period"] = Period.model_validate({"type": "relative", "n": parsed[0], "unit": parsed[1]})
+            added.append(f"period: {parsed[0]} {parsed[1]}")
+        except ValueError:
+            pass
+    g = r.spec.group_by
+    if g in _RANKED_NOUNS and "top_n" not in r.spec.model_fields_set:
+        counts = count_for_nouns(question, _RANKED_NOUNS[g])
+        if len(counts) == 1 and 1 <= counts[0] <= 50:
+            update["top_n"] = counts[0]
+            added.append(f"top_n: {counts[0]}")
+    if not update:
+        return r
+    spec = r.spec.model_copy(update=update)
+    return replace(r, spec=spec, period=spec.period.bounds(catalog.max_date) if "period" in update else r.period,
+                   added_from_question=r.added_from_question + tuple(added))
+
+
 def check_coverage(question: str, r: ResolvedSpec, catalog: Catalog, resolver) -> ResolvedSpec:
     """Refuse a spec that silently drops a category, product, municipality,
     pesticide or period the question names — the LLM must never broaden.
-    One repair: a spec with no category and no product at all gets the
-    category words the question names (from the reviewed table); that can
-    only narrow the answer. Returns the (possibly repaired) spec."""
+    Repairs, each of which can only narrow the answer: a spec with no category
+    and no product at all gets the category words the question names (from
+    the reviewed table); a spec with no period gets the question's relative
+    period when it parses unambiguously ("آخر شهرين"); a ranking with no
+    top_n gets the number the question puts on the grouped noun ("أخطر 5
+    أحياء"). Returns the (possibly repaired) spec."""
     g = r.spec.group_by
     in_scope_cats = set(r.categories) | ({r.highlight} if g is GroupBy.category and r.highlight else set())
     if g is not GroupBy.category:
@@ -233,6 +266,12 @@ def check_coverage(question: str, r: ResolvedSpec, catalog: Catalog, resolver) -
     months = {m for m in _MONTHS + _PERIOD_WORDS if m in q}
     # "من شهر إلى آخر" with group_by month is a trend, not a period.
     phrase = has_period_phrase(question) and g is not GroupBy.month
-    if (phrase or months) and r.period is None:
+    years = named_years(question)
+    r = _repair_period_and_top_n(question, r, catalog, phrase and not months and not years)
+    if (phrase or months or years) and r.period is None:
         raise SpecRejected("coverage: period dropped")
+    # A named year must bound the period (a month without its year defaults
+    # to the data's latest year).
+    if years and not (min(years) <= r.period[0].year and r.period[1].year <= max(years)):
+        raise SpecRejected(f"coverage: year {years} dropped")
     return r

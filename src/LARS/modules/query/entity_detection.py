@@ -11,7 +11,7 @@ engine state (self._get_connection(), detection helpers, handlers) via self.
 from typing import List, Optional
 
 from modules.query.mappings import CATEGORY_EN
-from modules.query.text_norm import NormText, has_period_phrase
+from modules.query.text_norm import NormText, has_period_phrase, named_years, names_quarter
 
 
 class EntityDetectionMixin:
@@ -190,7 +190,8 @@ class EntityDetectionMixin:
         detected_samples_raw = self._detect_sample_types(query)
         detected_neighborhoods = self._detect_neighborhoods(query)
         detected_pesticide = self._detect_pesticide(query)
-        detected_period = self._detect_time_period(query)
+        relative_period = self._detect_time_period(query)
+        detected_period = relative_period
         if detected_period is None:
             detected_period = self._detect_absolute_month(query)
         detected_period_label = self._period_label(query) if detected_period else None
@@ -219,4 +220,33 @@ class EntityDetectionMixin:
             'period_unresolved': detected_period is None and has_period_phrase(query),
             # "من يناير إلى مارس": month ranges are not supported yet; refused.
             'multi_month': len(self._months_mentioned(query)) >= 2,
+            # A year the month filter cannot honour: refused.
+            'period_unhandled': self._period_unhandled(query, relative_period, detected_period),
+            # "الربع الأول": no handler filters by a quarter; only a quarterly
+            # breakdown may answer (CoreQueryEngine._quarter_grouped).
+            'quarter_named': names_quarter(query),
         }
+
+    def _period_unhandled(self, query: str, relative_period: Optional[str],
+                          detected_period: Optional[str]) -> bool:
+        """True when the question names a year the handlers cannot filter by:
+        their month filter ignores the year, so a named year is kept only for a
+        single month in the one year the data covers ("مارس 2026" while the
+        data is all 2026)."""
+        years = named_years(query)
+        if not years:
+            return False
+        month_only = relative_period is None and detected_period is not None
+        return not (month_only and years == self._data_years() and len(years) == 1)
+
+    def _data_years(self) -> List[int]:
+        """Calendar years present in chemistry_tidy (cached per engine)."""
+        if getattr(self, "_data_years_cache", None) is None:
+            con = self._get_connection()
+            try:
+                self._data_years_cache = [int(y) for (y,) in con.execute(
+                    "SELECT DISTINCT year(test_date) FROM chemistry_tidy "
+                    "WHERE test_date IS NOT NULL ORDER BY 1").fetchall()]
+            finally:
+                con.close()
+        return self._data_years_cache

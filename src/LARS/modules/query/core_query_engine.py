@@ -13,6 +13,7 @@ Features:
 - Time-period detection (last N days/weeks/months/years) applied across
   all handlers that make sense with a date filter
 """
+import inspect
 import re
 import duckdb
 import pandas as pd
@@ -63,7 +64,9 @@ from modules.query.entity_detection import EntityDetectionMixin
 from modules.query.entity_resolver import EntityResolver
 from modules.query.messages import (CANNOT_COMPUTE_RATE_MESSAGE, EU_MRL_COUNT_LABEL,
                                     CATEGORY_UNSUPPORTED_MESSAGE, MULTI_MONTH_MESSAGE,
-                                    POLITE_ERROR_MESSAGE, eu_mrl_markdown)
+                                    PERIOD_NOT_APPLIED_MESSAGE, POLITE_ERROR_MESSAGE,
+                                    UNRESOLVED_PERIOD_MESSAGE, Refusal, eu_mrl_markdown,
+                                    refusal_kind)
 from modules.query.text_norm import compliance_intent
 from modules.semantic.fallback import SEMANTIC_ELIGIBLE, init_semantic
 
@@ -272,18 +275,18 @@ class CoreQueryEngine(
         names = "، ".join(f"«{t}»" for t in terms)
         hints = [f"«{suggestions[t]}»" for t in terms if suggestions and t in suggestions]
         hint = f" هل تقصد {' أو '.join(hints)}؟" if hints else ""
-        return (f"⚠️ لم أجد {names} ضمن أسماء العينات في البيانات الحالية.{hint} "
-                f"تأكد من اسم المنتج، أو اسأل عن فئة (خضار، فواكه، توابل، مكسرات، حبوب).")
+        return Refusal("unresolved_product",
+                       f"⚠️ لم أجد {names} ضمن أسماء العينات في البيانات الحالية.{hint} "
+                       f"تأكد من اسم المنتج، أو اسأل عن فئة (خضار، فواكه، توابل، مكسرات، حبوب).")
 
     def _unresolved_period_message(self) -> str:
-        return ("⚠️ لم أتمكن من فهم الفترة الزمنية المذكورة في السؤال، ولن أجيب على كامل "
-                "البيانات بدلاً منها. جرّب صيغة مثل «آخر ٣ أشهر» أو «الشهر الماضي» أو اسم الشهر.")
+        return UNRESOLVED_PERIOD_MESSAGE
 
     def _unresolved_municipality_message(self) -> str:
-        self._refusal = "unresolved_municipality"
         resolver = self._get_resolver()
         known = "، ".join(resolver.db_municipalities) if resolver else ""
-        return f"⚠️ لم أتعرف على البلدية المذكورة في السؤال. البلديات المتاحة في البيانات: {known}"
+        return Refusal("unresolved_municipality",
+                       f"⚠️ لم أتعرف على البلدية المذكورة في السؤال. البلديات المتاحة في البيانات: {known}")
 
     @staticmethod
     def _in_clause(column: str, values: List[str]) -> Tuple[str, List[str]]:
@@ -495,6 +498,10 @@ class CoreQueryEngine(
             logging.exception(f"Query failed: {query!r}")
             return POLITE_ERROR_MESSAGE, None
         response_text, df = self._guard_percentages(response_text, df)
+        # Every refusal is a typed Refusal (messages.py), whichever code path
+        # built it: the kind comes from the answer itself, not from flags set
+        # at each call site.
+        self._refusal = refusal_kind(response_text)
         if self._semantic is not None and self._refusal in SEMANTIC_ELIGIBLE:
             return self._semantic_fallback(query, response_text, df)
         return response_text, df
@@ -561,6 +568,54 @@ class CoreQueryEngine(
         "_handle_category_limit_summary": lambda a, k: k.get("by_pesticide", False) is True,
         "_handle_pesticide_stats": lambda a, k: True,
     }
+
+    # Handlers audited to put the period into every query they run (in the
+    # base CTE where there is one): `date_filter`, or ctx["detected_period"]
+    # for _handle_top_pesticides. Any other handler ignores the period.
+    _PERIOD_VERIFIED = frozenset({
+        "_handle_comprehensive_neighborhood", "_handle_n_pesticides", "_handle_multiple_n_pesticides",
+        "_handle_count_samples_limit", "_handle_count_samples_compliance",
+        "_handle_count_samples_compliance_table", "_handle_list_pesticides",
+        "_handle_neighborhood_pesticides", "_handle_find_pesticide_in_sample",
+        "_handle_neighborhood_ranking", "_handle_comprehensive_analysis", "_handle_pesticide_stats",
+        "_handle_samples_with_pesticide", "_handle_unique_samples_count", "_handle_find_pesticide_all",
+        "_handle_sample_pesticide_limit", "_handle_simple_sample_count", "_handle_violations_threshold",
+        "_handle_headline_totals", "_handle_kpi_summary", "_handle_total_violations",
+        "_handle_pesticide_in_category", "_handle_top_pesticides",
+    })
+
+    def names_period(self, query: str) -> bool:
+        """True if the question names any period (understood or not)."""
+        ctx = self._extract_context(query)
+        return bool(ctx['detected_period'] or ctx['period_unresolved'] or ctx['multi_month']
+                    or ctx['period_unhandled'] or ctx['quarter_named'])
+
+    def _period_applied(self, date_filter: str) -> bool:
+        """True if at least one handler answered and every handler called is on
+        _PERIOD_VERIFIED and received exactly this period."""
+        if not self._handlers_called:
+            return False
+        for name, args, kwargs in self._handlers_called:
+            if name not in self._PERIOD_VERIFIED:
+                return False
+            try:
+                bound = inspect.signature(getattr(type(self), name)).bind(self, *args, **kwargs)
+            except TypeError:
+                return False
+            ctx = bound.arguments.get("ctx")
+            received = (ctx.get("detected_period") if isinstance(ctx, dict)
+                        else bound.arguments.get("date_filter"))
+            if received != date_filter:
+                return False
+        return True
+
+    def _quarter_grouped(self) -> bool:
+        """True if the answer is a quarterly breakdown (the quarters named are
+        its rows, e.g. D016 "بين الربع الأول والربع الثاني")."""
+        return bool(self._handlers_called) and all(
+            name in ("_handle_time_series_breakdown", "_handle_time_series_extreme")
+            and (args[:1] or (kwargs.get("granularity"),))[0] == "quarter"
+            for name, args, kwargs in self._handlers_called)
 
     def _category_answer_verified(self) -> bool:
         """True if the handler that answered (the first one called) is on the
@@ -647,8 +702,8 @@ class CoreQueryEngine(
         # answer. See core_query_engine.py's _check_out_of_scope() below.
         oos_result = self._check_out_of_scope(query, query_lower)
         if oos_result is not None:
-            self._refusal = "out_of_scope"
-            return oos_result
+            text, df = oos_result
+            return Refusal("out_of_scope", text), df
 
         # ── Unresolved entity gate: a product was named but matches nothing in
         # the data. Answer that honestly instead of letting a handler run a
@@ -656,24 +711,23 @@ class CoreQueryEngine(
         resolution = ctx.get('resolution')
         if (resolution is not None and resolution.product_terms_unresolved
                 and not resolution.products and not resolution.categories):
-            self._refusal = "unresolved_product"
             return self._unresolved_product_message(
                 resolution.product_terms_unresolved, getattr(resolution, "product_suggestions", {})), None
 
         # Same for a relative period that was named but not understood:
         # never drop it and answer over the whole dataset.
         if ctx.get('period_unresolved'):
-            self._refusal = "unresolved_period"
             return self._unresolved_period_message(), None
         # Two or more months named: the month filter would keep only the first.
         if ctx.get('multi_month'):
-            self._refusal = "multi_month"
             return MULTI_MONTH_MESSAGE, None
+        # A year the month filter would ignore.
+        if ctx.get('period_unhandled'):
+            return self._unresolved_period_message(), None
         # "المكسرات" read as the product 'Mixed Nuts' (the category word itself):
         # refuse — the only product came from the category word.
         products, categories = self._products_and_categories(ctx)
         if categories and resolution is not None and resolution.products and not products:
-            self._refusal = "category"
             return CATEGORY_UNSUPPORTED_MESSAGE, None
         category_question = bool(categories) and not products
 
@@ -750,15 +804,21 @@ class CoreQueryEngine(
 
         # ── Fallback: nothing matched ───────────────────────────────────────────
         if result is None:
-            self._refusal = "not_understood"
             result = (self._handle_unknown_query(query), None)
 
         response_text, df = result
         # Category questions are answered only by handlers verified for them;
         # any other handler (which may ignore the category) → honest refusal.
         if category_question and not self._category_answer_verified():
-            self._refusal = "category"
             return CATEGORY_UNSUPPORTED_MESSAGE, None
+        # A period was extracted: only handlers verified to filter by it may
+        # answer, and only if they actually received it. Anything else would
+        # answer over all dates → typed refusal (the semantic layer may answer).
+        if refusal_kind(response_text) is None and (
+                (detected_period and not self._period_applied(detected_period))
+                or (ctx.get('quarter_named') and not self._quarter_grouped())):
+            logging.info(f"Period not applied by {[c[0] for c in self._handlers_called]}: {query!r}")
+            return PERIOD_NOT_APPLIED_MESSAGE, None
         response_text, df = self._guard_empty_scope(ctx, response_text, df)
 
         # ── Append date-range label once, regardless of which tier answered ───
@@ -2076,7 +2136,7 @@ class CoreQueryEngine(
 
 
     def _handle_unknown_query(self, query: str) -> str:
-        """Handle unknown queries"""
+        """Handle unknown queries (a typed not_understood refusal)."""
         response = "⚠️ **Sorry, I couldn't fully understand your question.**\n\n"
         response += "📝 **Examples of supported questions:**\n"
         response += "• How many samples of tomato, cucumber, and zucchini?\n"
@@ -2090,7 +2150,7 @@ class CoreQueryEngine(
         response += "• Search for fipronil in beans\n"
         response += "• Samples containing 6 pesticides\n"
         response += "• How many non-compliant/failed tomato samples last 3 months?\n"
-        return response
+        return Refusal("not_understood", response)
 
 
 def get_trust_badge(generated_sql: Optional[str]) -> str:

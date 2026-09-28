@@ -31,6 +31,10 @@ CATEGORY_AR = {
 }
 GROUP_COUNT_AR = {GroupBy.category: "تصنيفاً", GroupBy.product: "منتجاً", GroupBy.municipality: "بلدية",
                   GroupBy.neighborhood: "حياً", GroupBy.month: "شهراً"}
+GROUP_ONE_AR = {GroupBy.category: "تصنيف", GroupBy.product: "منتج", GroupBy.municipality: "بلدية",
+                GroupBy.neighborhood: "حي", GroupBy.month: "شهر"}
+GROUP_PLURAL_AR = {GroupBy.category: "التصنيفات", GroupBy.product: "المنتجات", GroupBy.municipality: "البلديات",
+                   GroupBy.neighborhood: "الأحياء", GroupBy.month: "الأشهر"}
 GROUP_AR = {GroupBy.category: "التصنيف", GroupBy.product: "المنتج", GroupBy.municipality: "البلدية",
             GroupBy.neighborhood: "الحي", GroupBy.month: "الشهر"}
 MONTHS_AR = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو",
@@ -199,6 +203,15 @@ def _format(r: ResolvedSpec, df: pd.DataFrame, total: Optional[pd.DataFrame], in
         return "\n".join(lines), _columns(df, m, keep_grp=False)
 
     g = s.group_by
+    if m in RATE_METRICS:
+        # Rate rankings need MIN_RATE_SAMPLES per group: say so when that
+        # leaves no group, or fewer than the N asked for.
+        if df.empty:
+            lines.append(f"النتيجة: لا يوجد أي {GROUP_ONE_AR[g]} بعدد {MIN_RATE_SAMPLES} عينات أو أكثر "
+                         f"ضمن هذه الشروط، لذلك لا يمكن ترتيب النسب.")
+        elif "top_n" in s.model_fields_set and len(df) < s.top_n:
+            lines.append(f"عدد {GROUP_PLURAL_AR[g]} التي لديها {MIN_RATE_SAMPLES} عينات أو أكثر ضمن هذه الشروط: "
+                         f"{_n(len(df))} فقط (المطلوب {s.top_n}).")
     if r.highlight is not None and (df["grp"] == r.highlight).any():
         row = df[df["grp"] == r.highlight].iloc[0]
         lines.append(f"• {_group_label(g, r.highlight)}: {_value_line(m, row)}"

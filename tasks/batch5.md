@@ -43,6 +43,13 @@ Evidence: `phase0/semantic_eval/` (bank_semantic_only_reviewed.csv, failure.csv)
       "products present" reading (sample_count by product) — prompt rule or example.
 - [ ] Unstable reading of the vague "وش صار بالعينات شهر ورا شهر؟" (sample count vs
       non-compliance rate per month); the live cache pins the first answer.
+- [ ] **"أخطر N أحياء … آخر شهر/شهرين":** Gemini sets unsupported=true about half the time
+      ("cannot compute the rate per neighborhood"), so live mode keeps the period_not_applied
+      refusal. When it does return a spec, the coverage repair restores the dropped period and
+      top_n and the answer matches SQL. Prompt rules/examples tried; they regressed A039 and F07d, so they were reverted.
+- [ ] **Period-blind handlers** (refused with a period since 2026-09-28): _handle_top_n_by_metric,
+      _handle_inspection_priority, _handle_time_series_*, the municipality handlers and the rest
+      not on CoreQueryEngine._PERIOD_VERIFIED. Adding date_filter to one = audit + add to the list.
 
 ## Older open findings
 - [ ] "المايونيز" fuzzy-matched to ethion in handler pesticide detection.

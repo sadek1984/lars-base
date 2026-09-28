@@ -255,3 +255,31 @@ def has_period_phrase(text: str) -> bool:
             if any(w in _PERIOD_MARKERS for w in near):
                 return True
     return False
+
+
+# ── Periods the handlers cannot filter by ────────────────────────────────────
+_QUARTER_ORDINALS = {"اول", "ثاني", "ثالث", "رابع", "اخير"}
+_NOT_A_YEAR_BEFORE = {"عينه", "رقم", "كود"}     # "العينة 2031" is a sample number
+
+
+def names_quarter(text: str) -> bool:
+    """"الربع الأول / الربع الأخير / Q2 / first quarter". Not "ربع العينات"."""
+    toks = tokens(text)
+    bare = [_strip_clitics(t) for t in toks]
+    for i, b in enumerate(bare):
+        nxt = bare[i + 1] if i + 1 < len(bare) else ""
+        if b == "ربع" and (nxt in _QUARTER_ORDINALS or nxt.startswith("سنو")):
+            return True
+        if re.fullmatch(r"q[1-4]", toks[i]) or (b == "quarter" and i and toks[i - 1] in
+                                                   {"first", "second", "third", "fourth", "last"}):
+            return True
+    return False
+
+
+def named_years(text: str) -> List[int]:
+    """Calendar years written in the question (2000–2099, any digits), except
+    numbers that follow عينة / رقم / كود."""
+    toks = tokens(text)
+    return sorted({int(t) for i, t in enumerate(toks)
+                   if re.fullmatch(r"20\d\d", t)
+                   and not (i and _strip_clitics(toks[i - 1]) in _NOT_A_YEAR_BEFORE)})

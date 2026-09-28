@@ -15,6 +15,7 @@ from typing import List, Optional, Tuple
 import pandas as pd
 
 from modules.query.mappings import get_pesticide_sql_filter_params
+from modules.query.messages import Refusal
 from modules.query.text_norm import norm
 
 # Intent router (optional - graceful fallback, same guard as core_query_engine)
@@ -436,9 +437,9 @@ class RoutingMixin:
             "too_compound": "This combines several sub-questions — try splitting it, e.g. ask for the pesticide list first, then the violation rate per pesticide separately.",
         }
 
-        if is_arabic:
-            return templates_ar.get(reason_type, self._handle_unknown_query(""))
-        return templates_en.get(reason_type, self._handle_unknown_query(""))
+        templates = templates_ar if is_arabic else templates_en
+        text = templates[reason_type] if reason_type in templates else self._handle_unknown_query("")
+        return Refusal("out_of_scope", text)
 
     def _check_out_of_scope(self, query: str, query_lower: str) -> Optional[Tuple[str, Optional[pd.DataFrame]]]:
         """

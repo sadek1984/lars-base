@@ -81,6 +81,33 @@ class Period(_Strict):
     start: Optional[date] = Field(default=None, description="range by exact dates (only if days are named)")
     end: Optional[date] = Field(default=None, description="range by exact dates (only if days are named)")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _month_range_given_as_dates(cls, data):
+        """The LLM sometimes gives a month range's year as dates:
+        {"type": "range", "from_month": 1, "to_month": 3, "end": "2026-03-31"}.
+        When every date given is that range's own boundary (start = 1st of
+        from_month, end = last day of to_month) in one year, keep the months
+        with that year. Anything else is left for the checks below to reject."""
+        if not (isinstance(data, dict) and data.get("type") in ("range", PeriodType.range)):
+            return data
+        fm, tm = data.get("from_month"), data.get("to_month")
+        dates = {k: data.get(k) for k in ("start", "end") if data.get(k) is not None}
+        if not (isinstance(fm, int) and isinstance(tm, int) and 1 <= fm <= tm <= 12 and dates):
+            return data
+        try:
+            parsed = {k: v if isinstance(v, date) else date.fromisoformat(str(v)) for k, v in dates.items()}
+        except ValueError:
+            return data
+        years = {d.year for d in parsed.values()} | ({data["year"]} if data.get("year") is not None else set())
+        if len(years) != 1:
+            return data
+        year = years.pop()
+        bounds = {"start": date(year, fm, 1), "end": _month_end(year, tm)}
+        if any(parsed[k] != bounds[k] for k in parsed):
+            return data
+        return {k: v for k, v in data.items() if k not in ("start", "end")} | {"year": year}
+
     @model_validator(mode="after")
     def _fields_match_type(self):
         given = {k for k in ("n", "unit", "month", "year", "from_month", "to_month", "start", "end")

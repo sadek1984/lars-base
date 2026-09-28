@@ -45,7 +45,9 @@ async def query_lars(request: QueryRequest):
                 get_top, to_voice_summary,
             )
             kind = classify_inspection_priority(request.query)
-            if kind in ("top", "urgent_neighborhood"):
+            # Priority scores cover all dates: a question that names a period
+            # goes through the engine, which refuses (or, live, the semantic layer answers).
+            if kind in ("top", "urgent_neighborhood") and not get_lars_engine().names_period(request.query):
                 params = extract_priority_params(request.query)
                 level = "neighborhood" if kind == "urgent_neighborhood" else params["level"]
                 db_path = os.environ.get("LARS_DUCKDB_PATH",

@@ -75,6 +75,8 @@ def log_lines(sem):
 
 def test_off_builds_nothing(monkeypatch, engine_off):
     monkeypatch.delenv("LARS_SEMANTIC_MODE", raising=False)
+    assert fb.mode_from_env() == "live"            # the default since 0a5b710
+    monkeypatch.setenv("LARS_SEMANTIC_MODE", "off")
     assert fb.init_semantic(str(DB_PATH)) == ("off", None)
     monkeypatch.setenv("LARS_SEMANTIC_MODE", "bogus")
     assert fb.init_semantic(str(DB_PATH)) == ("off", None)

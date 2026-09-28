@@ -153,9 +153,20 @@ def test_month_range(con):
     assert p.bounds(date(2026, 5, 17)) == (date(2026, 1, 1), date(2026, 3, 31))
     assert count_between(con, *p.bounds(date(2026, 5, 17))) == 1111
     for bad in ({"type": "range", "from_month": 3, "to_month": 1}, {"type": "range", "year": 2026},
-                {"type": "range", "from_month": 1, "to_month": 3, "start": "2026-01-01"}):
+                {"type": "range", "from_month": 1, "to_month": 3, "start": "2026-01-02"},
+                {"type": "range", "from_month": 1, "to_month": 3, "end": "2026-03-30"},
+                {"type": "range", "from_month": 1, "to_month": 3, "start": "2025-01-01", "end": "2026-03-31"},
+                {"type": "range", "from_month": 1, "to_month": 3, "year": 2025, "end": "2026-03-31"}):
         with pytest.raises(ValidationError):
             Period.model_validate(bad)
+
+
+@pytest.mark.parametrize("given", [{"end": "2026-03-31"}, {"start": "2026-01-01"},
+                                   {"start": "2026-01-01", "end": "2026-03-31", "year": 2026}])
+def test_month_range_year_given_as_boundary_dates(given):
+    # Gemini's shape for "من يناير إلى مارس 2026": the year as boundary dates.
+    p = Period.model_validate({"type": "range", "from_month": 1, "to_month": 3, **given})
+    assert (p.from_month, p.to_month, p.year, p.start, p.end) == (1, 3, 2026, None, None)
 
 
 def test_latest_month_is_the_calendar_month_of_the_latest_data(con):
