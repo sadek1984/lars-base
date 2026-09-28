@@ -42,7 +42,7 @@ DEFAULT_LOG = Path(__file__).resolve().parents[4] / "logs" / "semantic_log.jsonl
 
 
 def mode_from_env() -> str:
-    mode = os.environ.get("LARS_SEMANTIC_MODE", "off").strip().lower()
+    mode = os.environ.get("LARS_SEMANTIC_MODE", "live").strip().lower()
     return mode if mode in MODES else "off"
 
 
