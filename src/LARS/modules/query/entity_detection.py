@@ -11,7 +11,8 @@ engine state (self._get_connection(), detection helpers, handlers) via self.
 from typing import List, Optional
 
 from modules.query.mappings import CATEGORY_EN
-from modules.query.text_norm import NormText, has_period_phrase, named_years, names_quarter
+from modules.query.text_norm import (NormText, canonical_compliance, has_period_phrase, named_years,
+                                     names_quarter)
 
 
 class EntityDetectionMixin:
@@ -183,7 +184,9 @@ class EntityDetectionMixin:
         tier matches "غير المطابقه", "اداء", "أيٍّ" the same way as the
         canonical spelling.
         """
-        query = NormText(query)
+        # Canonical wording first ("عدم المطابقة" → "غير المطابقة"), so matchers
+        # on the raw text (router, regexes) see what norm() sees.
+        query = NormText(canonical_compliance(str(query)))
         query_normalized = NormText(self._normalize_query(query))
         query_lower = NormText(query_normalized.lower())
 

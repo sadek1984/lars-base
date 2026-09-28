@@ -66,8 +66,8 @@ from modules.query.messages import (CANNOT_COMPUTE_RATE_MESSAGE, EU_MRL_COUNT_LA
                                     CATEGORY_UNSUPPORTED_MESSAGE, MULTI_MONTH_MESSAGE,
                                     PERIOD_NOT_APPLIED_MESSAGE, POLITE_ERROR_MESSAGE,
                                     UNRESOLVED_PERIOD_MESSAGE, Refusal, eu_mrl_markdown,
-                                    refusal_kind)
-from modules.query.text_norm import compliance_intent
+                                    group_not_applied_message, refusal_kind)
+from modules.query.text_norm import compliance_intent, requested_grouping
 from modules.semantic.fallback import SEMANTIC_ELIGIBLE, init_semantic
 
 
@@ -620,6 +620,33 @@ class CoreQueryEngine(
         month_end = (pd.Timestamp(max_date) + pd.offsets.MonthEnd(0)).date()
         return partial_period_note(month_end, max_date, "الشهر غير مكتمل")
 
+    # Result columns that mean "one row per <dimension>".
+    _GROUP_COLUMNS = {
+        "neighborhood": {"neighborhood", "الحى", "الحي"},
+        "municipality": {"municipality", "اسم البلدية", "البلدية"},
+        "product": {"sample_type", "product", "اسم العينة", "المنتج"},
+        "month": {"month"},
+    }
+
+    def _result_groupings(self, df: Optional[pd.DataFrame]) -> set:
+        """Dimensions the answer's table is grouped by: its columns, plus the
+        answering handler's own argument for generic columns (entity_name of
+        _handle_top_n_by_metric, period of _handle_time_series_* by month)."""
+        if df is None or df.empty or not self._handlers_called:
+            return set()
+        cols = {str(c) for c in df.columns}
+        dims = {d for d, names in self._GROUP_COLUMNS.items() if names & cols}
+        name, args, kwargs = self._handlers_called[0]
+        try:
+            bound = inspect.signature(getattr(type(self), name)).bind(self, *args, **kwargs).arguments
+        except TypeError:
+            return dims
+        if "entity_name" in cols and bound.get("entity") in self._GROUP_COLUMNS:
+            dims.add(bound["entity"])
+        if "period" in cols and bound.get("granularity") == "month":
+            dims.add("month")
+        return dims
+
     def _quarter_grouped(self) -> bool:
         """True if the answer is a quarterly breakdown (the quarters named are
         its rows, e.g. D016 "بين الربع الأول والربع الثاني")."""
@@ -830,6 +857,11 @@ class CoreQueryEngine(
                 or (ctx.get('quarter_named') and not self._quarter_grouped())):
             logging.info(f"Period not applied by {[c[0] for c in self._handlers_called]}: {query!r}")
             return PERIOD_NOT_APPLIED_MESSAGE, None
+        # Same for a ranking/breakdown by a group: the table must be grouped by it.
+        wanted = requested_grouping(query)
+        if wanted and refusal_kind(response_text) is None and wanted not in self._result_groupings(df):
+            logging.info(f"Grouping {wanted} not applied by {[c[0] for c in self._handlers_called]}: {query!r}")
+            return group_not_applied_message(wanted), None
         response_text, df = self._guard_empty_scope(ctx, response_text, df)
 
         # ── Append date-range label once, regardless of which tier answered ───

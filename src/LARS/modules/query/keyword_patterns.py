@@ -41,7 +41,7 @@ class KeywordPatternsMixin:
         re.compile(r"ترتيب\s+المبيدات"),
         re.compile(r"(?:^|\s)(?:اكثر|الاكثر)\s+(?!من\s)(?:\S+\s+)?" + _PEST + r"(?:\s|$|؟)"),
         re.compile(_PEST + r"\s+الاكثر\s+(?:ظهورا|تكرارا|شيوعا|انتشارا)"),
-        re.compile(_PEST + r"\s+(?:التي|اللي)\s+سببت\s+عدم\s+المطابقه"),
+        re.compile(_PEST + r"\s+(?:التي|اللي)\s+سببت\s+غير\s+المطابقه"),   # "عدم المطابقة" after norm
     )
     _PESTICIDES_IN_SAMPLES = re.compile(_PEST + r"\s+(?:اللي\s+)?في\s+العينات")
 
@@ -59,9 +59,7 @@ class KeywordPatternsMixin:
         verdict = compliance_intent(query)
         ranking = any(p.search(q) for p in self._TOP_PESTICIDE_PATTERNS) or (
             verdict == 'non_compliant' and bool(self._PESTICIDES_IN_SAMPLES.search(q)))
-        # "عدم المطابقة" means non-compliance; the shared compliance_intent reads
-        # it as 'compliant' ("عدم" is not in its negator list), so check it here.
-        non_compliant = verdict == 'non_compliant' or 'عدم المطابقه' in q
+        non_compliant = verdict == 'non_compliant'        # incl. "عدم المطابقة" (text_norm)
         if not ranking:
             return None
         if verdict == 'compliant' and not non_compliant:

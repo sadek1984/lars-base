@@ -30,13 +30,28 @@ _INDIC_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩٫", "0123456789.")
 _TOKEN_PUNCT = "؟?،,.!:;()[]\"'«»…"
 
 
+# "عدم المطابقة / عدم مطابقة / عدم التطابق / عدم الامتثال" (official-report
+# wording) is non-compliance: rewritten to "غير المطابقة", the form every
+# matcher knows. A clitic on عدم ("وعدم", "لعدم") is kept as its own word.
+_NON_COMPLIANCE_PHRASE = re.compile(
+    r"(?<!\w)([وبلف]?)عدم\s+(ال)?(?:مطابق\w*|تطابق\w*|[اإ]متثال\w*)")
+
+
+def canonical_compliance(text: str) -> str:
+    """'نسبة عدم المطابقة' → 'نسبة غير المطابقة'; 'وعدم مطابقة' → 'و غير مطابقة'."""
+    return _NON_COMPLIANCE_PHRASE.sub(
+        lambda m: f"{m.group(1) + ' ' if m.group(1) else ''}غير {m.group(2) or ''}مطابقة", text)
+
+
 @lru_cache(maxsize=4096)
 def norm(text: str) -> str:
-    """Canonical form for matching: normalize_arabic_text (tashkeel, tatweel,
-    hamza carriers, ى→ي, ة→ه), Western digits, lower case, single spaces."""
+    """Canonical form for matching: canonical_compliance, normalize_arabic_text
+    (tashkeel, tatweel, hamza carriers, ى→ي, ة→ه), Western digits, lower case,
+    single spaces."""
     if not text:
         return ""
-    t = normalize_arabic_text(str(text)).translate(_INDIC_DIGITS).lower()
+    t = normalize_arabic_text(canonical_compliance(normalize_arabic_text(str(text))))
+    t = t.translate(_INDIC_DIGITS).lower()
     return " ".join(t.split())
 
 
@@ -88,7 +103,7 @@ def tokens(text: str) -> List[str]:
 # ── Compliance (official verdict, sample_result) ─────────────────────────────
 # Forms are normalized (ة→ه, hamza removed). A negator directly before a
 # "match" word flips it to non-compliant: "ما طابقت", "غير المطابقه", "لم تطابق".
-_NEGATORS = {"غير", "الغير", "ما", "لم", "لا"}
+_NEGATORS = {"غير", "الغير", "ما", "لم", "لا", "عدم"}   # "عدم" + match word is also rewritten by norm
 _MATCH_STEMS = ("مطابق", "طابق", "تطابق")
 _NON_COMPLIANT_STEMS = ("راسب", "رسب", "فاشل", "فشل", "مرفوض")   # not "رواسب" (= residues)
 _COMPLIANT_STEMS = ("ناجح", "نجح", "مقبول")
@@ -283,3 +298,39 @@ def named_years(text: str) -> List[int]:
     return sorted({int(t) for i, t in enumerate(toks)
                    if re.fullmatch(r"20\d\d", t)
                    and not (i and _strip_clitics(toks[i - 1]) in _NOT_A_YEAR_BEFORE)})
+
+
+# ── Rankings / breakdowns by a group ─────────────────────────────────────────
+_GROUP_NOUNS = {
+    "neighborhood": ({"احياء"}, {"حي"}),               # (plural, singular)
+    "municipality": ({"بلديات"}, {"بلديه"}),
+    "product": ({"منتجات", "اصناف"}, {"منتج", "صنف"}),
+    "month": ({"شهور", "اشهر"}, {"شهر"}),
+}
+_RANK_WORDS = {"اعلي", "اكثر", "اقل", "ادني", "اخطر", "اسوا", "افضل", "ترتيب", "رتب", "مقارنه", "قارن"}
+_BY_WORDS = {"حسب", "لكل", "كل", "توزيع", "بحسب"}
+_RANK_AFTER = {"اعلي", "اكثر", "اقل", "اخطر", "اسوا", "افضل"}   # "الأحياء الأكثر مخالفة"
+
+
+def requested_grouping(text: str) -> Optional[str]:
+    """The dimension a question asks to rank or break down by — 'neighborhood',
+    'municipality', 'product' or 'month' — or None. Signals: a plural group
+    noun right after a ranking word ("أعلى 5 أحياء", "أكثر المنتجات") or
+    followed by one ("الأحياء الأكثر"); "حسب/لكل/كل <group>"; "شهر بشهر",
+    "شهرياً". A named place or period ("في حي الإسكان", "آخر 3 أشهر") is a
+    filter, not a grouping."""
+    toks = tokens(text)
+    bare = [_strip_clitics(t) for t in toks]
+    for i, b in enumerate(bare):
+        if b in ("شهريا", "شهري") or (b == "شهر" and bare[i + 1:i + 3] in (["ب", "شهر"], ["ورا", "شهر"])) \
+                or (b == "شهر" and i + 1 < len(toks) and toks[i + 1] in ("بشهر", "لشهر")):
+            return "month"
+        for dim, (plural, singular) in _GROUP_NOUNS.items():
+            if b in plural:
+                before = [w for w in bare[max(0, i - 3):i] if number_value(w) is None]
+                if any(w in _RANK_WORDS | _BY_WORDS for w in before[-2:]) or \
+                        (i + 1 < len(bare) and bare[i + 1] in _RANK_AFTER):
+                    return dim
+            if (b in plural or b in singular) and i and bare[i - 1] in _BY_WORDS:
+                return dim
+    return None

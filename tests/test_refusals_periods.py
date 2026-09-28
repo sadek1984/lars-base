@@ -270,3 +270,70 @@ def test_handler_month_says_it_is_incomplete(engine):
     may = engine.process("ما هي العينات غير المطابقة في شهر مايو؟")[0]
     march = engine.process("ما هي العينات غير المطابقة في شهر مارس؟")[0]
     assert may.endswith(f"⚠️ {PARTIAL} (الشهر غير مكتمل)") and PARTIAL not in march
+
+
+# ── "عدم المطابقة" = non-compliance (text_norm.canonical_compliance) ──────────
+
+@pytest.mark.parametrize("q", ["نسبة عدم المطابقة", "عدم مطابقة الكمون", "عدم التطابق", "حالات عدم الامتثال",
+                               "عدم الإمتثال", "وعدم المطابقة", "عدم مطابقتها للمواصفات", "نسبة عَدَمِ المُطابَقَة"])
+def test_adam_is_non_compliant(q):
+    from modules.query.text_norm import compliance_intent, norm
+    assert compliance_intent(q) == "non_compliant" and "غير" in norm(q) and "عدم" not in norm(q)
+
+
+def test_adam_elsewhere_untouched():
+    from modules.query.text_norm import canonical_compliance, compliance_intent
+    q = "كم عدد المتبقيات التي تعذّر تقييمها لعدم وجود حد؟"          # B033
+    assert canonical_compliance(q) == q and compliance_intent(q) is None
+    assert compliance_intent("نسبة المطابقة") == "compliant"
+
+
+def test_engine_sees_adam_as_non_compliant(engine):
+    ctx = engine._extract_context("عدد العينات عدم المطابقة في مارس")
+    assert "غير المطابقة" in str(ctx["query"])                       # raw text too (router, regexes)
+
+
+@pytest.mark.parametrize("q, samples, nc", [
+    ("نسبة عدم المطابقة في الكمون", 233, 147),        # SQL: Cumin + Ground Cumin + Cumin Seeds
+    ("عدد العينات عدم المطابقة في مارس", 266, 24),
+])
+def test_adam_answers_match_sql(engine, q, samples, nc):
+    text = engine.process(q)[0]
+    assert engine._refusal is None and "Non-Compliant samples" in text
+    assert f"**{samples}**" in text and f"Non-Compliant: {nc}**" in text
+
+
+# ── shape guard: a ranking/breakdown by a group must be grouped by it ────────
+
+@pytest.mark.parametrize("q, dim", [
+    ("أعلى 5 أحياء في نسبة عدم المطابقة", "neighborhood"), ("ما هي أخطر ٥ أحياء من حيث نسبة المخالفة؟", "neighborhood"),
+    ("الأحياء الأكثر مخالفة", "neighborhood"), ("لكل بلدية", "municipality"), ("ما عدد العينات في كل بلدية", "municipality"),
+    ("أعلى ٥ منتجات من حيث نسبة الرسوب", "product"), ("شلون كان الوضع شهر بشهر", "month"),
+    ("ما عدد العينات المفحوصة شهرياً؟", "month"), ("حسب الشهر", "month"),
+    ("كم عينة في حي الإسكان", None), ("آخر 3 أشهر", None), ("كم عدد الأحياء", None), ("أكثر 5 مبيدات", None),
+])
+def test_requested_grouping(q, dim):
+    from modules.query.text_norm import requested_grouping
+    assert requested_grouping(q) == dim
+
+
+@pytest.mark.parametrize("qid, dim", [("C010", "المنتج"), ("D031", "الشهر")])
+def test_wrong_shape_is_refused(engine, bank, qid, dim):
+    text, df = engine.process(bank[qid])[:2]
+    assert engine._refusal == "group_not_applied" and df is None and f"موزعة حسب {dim}" in text
+
+
+@pytest.mark.parametrize("qid", ["A055", "B029", "B041", "D007", "D010", "D011", "D015", "D030", "E012"])
+def test_right_shape_still_answers(engine, bank, qid):
+    _, df = engine.process(bank[qid])[:2]
+    assert engine._refusal is None and df is not None and len(df)
+
+
+@pytest.mark.parametrize("q", ["أعلى 5 أحياء في نسبة عدم المطابقة", "أعلى 5 أحياء في نسبة عدم المطابقة في آخر شهرين"])
+def test_neighborhood_ranking_goes_to_semantic(live, q):
+    text, df = live.process(q)[:2]
+    assert live._refusal == "group_not_applied" and live.last_source == "semantic"
+    assert list(df["neighborhood"])[-1] == "الإجمالي" and len(df) == 6         # top 5 + total
+    if "شهرين" not in q:   # SQL, all data: العجيبة 21/40, خب القبر 4/11, البساتين 14/57, ربيشة 4/17, الصباخ 11/49
+        assert [(r.neighborhood, r.samples, r.non_compliant) for r in df.iloc[:-1].itertuples()] == [
+            ("العجيبة", 40, 21), ("خب القبر", 11, 4), ("البساتين", 57, 14), ("ربيشة", 17, 4), ("الصباخ", 49, 11)]

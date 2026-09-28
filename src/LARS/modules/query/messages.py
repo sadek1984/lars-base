@@ -19,8 +19,8 @@ class Refusal(str):
     period label appended at the end) keeps the kind.
 
     Kinds: out_of_scope, not_understood, category, multi_month,
-    unresolved_period, period_not_applied, unresolved_product,
-    unresolved_municipality.
+    unresolved_period, period_not_applied, group_not_applied,
+    unresolved_product, unresolved_municipality.
     """
     kind: str
 
@@ -57,6 +57,18 @@ UNRESOLVED_PERIOD_MESSAGE = Refusal("unresolved_period", (
     "⚠️ لم أتمكن من فهم الفترة الزمنية المذكورة في السؤال، ولن أجيب على كامل "
     "البيانات بدلاً منها. جرّب صيغة مثل «آخر ٣ أشهر» أو «الشهر الماضي» أو اسم الشهر."
 ))
+
+# The question asks for a ranking/breakdown by a group (neighborhoods,
+# municipalities, products, months) but the answering handler's table is not
+# grouped by it (CoreQueryEngine._result_groupings).
+GROUP_AR = {"neighborhood": "الحي", "municipality": "البلدية", "product": "المنتج", "month": "الشهر"}
+
+
+def group_not_applied_message(dimension: str) -> Refusal:
+    return Refusal("group_not_applied", (
+        f"⚠️ لم أتمكن من عرض النتيجة موزعة حسب {GROUP_AR[dimension]} كما طُلب، "
+        f"ولن أعرض توزيعاً مختلفاً بدلاً منه."))
+
 
 # A period was understood, but the handler that would answer cannot filter by
 # it (not on CoreQueryEngine._PERIOD_VERIFIED): never answer over all dates.
