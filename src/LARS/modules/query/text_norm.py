@@ -334,3 +334,32 @@ def requested_grouping(text: str) -> Optional[str]:
             if (b in plural or b in singular) and i and bare[i - 1] in _BY_WORDS:
                 return dim
     return None
+
+
+# ── "Samples containing N pesticides" (not "the top N pesticides") ───────────
+_SAMPLE_NOUNS = {"عينه", "عينات", "sample", "samples"}
+_PEST_NOUNS = {"مبيد", "مبيدات", "مبيدين", "متبقي", "متبقيات", "pesticide", "pesticides"}
+_CONTAINS = {"فيها", "فيه", "بها", "به", "تحتوي", "يحتوي", "تحوي", "يحوي", "تضم", "وصلت", "بلغت",
+             "containing", "contain", "contains", "with", "having", "has", "have"}
+_PESTICIDE_FREE = ("خاليه من المبيدات", "خاليه تماما من المبيدات", "خالي من المبيدات", "بدون مبيدات",
+                   "zero pesticide", "free of pesticides", "no pesticide", "clean")
+
+
+def asks_samples_with_n_pesticides(text: str) -> bool:
+    """True when the question asks for samples by how many pesticides each one
+    contains: "كم عينة فيها 5 مبيدات", "العينات التي تحتوي على مبيدين",
+    "عينات بثلاثة مبيدات", "samples with 3 pesticides", or pesticide-free
+    samples. "أعلى 5 مبيدات" / "أكثر 5 مبيدات" (a ranking) is not."""
+    t = norm(text)
+    if any(p in t for p in _PESTICIDE_FREE):
+        return True
+    toks = tokens(text)
+    if not any(x in _SAMPLE_NOUNS or _strip_clitics(x) in _SAMPLE_NOUNS for x in toks):
+        return False
+    for x in toks:
+        if x in _CONTAINS or _strip_clitics(x) in _CONTAINS or x == "ب":
+            return True
+        # "بمبيدين", "بثلاثة", "ب5"
+        if x.startswith("ب") and len(x) > 1 and (x[1:] in _PEST_NOUNS or number_value(x[1:]) is not None):
+            return True
+    return False

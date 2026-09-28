@@ -37,13 +37,32 @@ class KeywordPatternsMixin:
     # "Top N pesticides" phrasings (normalized text). "أكثر من N مبيدات" means
     # "more than N pesticides" (a per-sample count) and is not a ranking.
     _PEST = r"(?:مبيد|مبيدات|المبيدات)"
+    # أعلى/أبرز/أهم/أشهر N مبيدات = أكثر N مبيدات. "أشهر" is also "months": not
+    # after a number or آخر/خلال ("آخر 3 أشهر المبيدات …" is a period).
     _TOP_PESTICIDE_PATTERNS = (
         re.compile(r"ترتيب\s+المبيدات"),
-        re.compile(r"(?:^|\s)(?:اكثر|الاكثر)\s+(?!من\s)(?:\S+\s+)?" + _PEST + r"(?:\s|$|؟)"),
+        re.compile(r"(?:^|\s)[لو]?(?P<w>اكثر|الاكثر|اعلي|الاعلي|ابرز|اهم|اشهر)\s+(?!من\s)(?:\S+\s+)?"
+                   + _PEST + r"(?:\s|$|؟)"),
         re.compile(_PEST + r"\s+الاكثر\s+(?:ظهورا|تكرارا|شيوعا|انتشارا)"),
         re.compile(_PEST + r"\s+(?:التي|اللي)\s+سببت\s+غير\s+المطابقه"),   # "عدم المطابقة" after norm
     )
+    # Ranking metric named after the ranking: "من حيث عدد المخالفات" → samples
+    # above the EU MRL (the per-pesticide technical metric); "من حيث نسبة …" →
+    # a per-pesticide rate, which this handler does not compute.
+    _BY_VIOLATIONS = re.compile(r"(?:من\s+حيث|حسب|بحسب)\s+(?:عدد\s+)?(?:ال)?(?:مخالفات|مخالفه|تجاوزات|تجاوز)")
+    _BY_RATE = re.compile(r"(?:من\s+حيث|حسب|بحسب)\s+(?:ال)?نسبه")
     _PESTICIDES_IN_SAMPLES = re.compile(_PEST + r"\s+(?:اللي\s+)?في\s+العينات")
+
+    def _top_pesticide_phrase(self, q: str) -> bool:
+        """`q` (normalized) asks for the top N pesticides."""
+        for p in self._TOP_PESTICIDE_PATTERNS:
+            for m in p.finditer(q):
+                if m.groupdict().get("w") == "اشهر":
+                    prev = q[:m.start("w")].split()[-1:]
+                    if prev and (number_value(prev[0]) is not None or prev[0] in ("اخر", "خلال")):
+                        continue
+                return True
+        return False
 
     def _dispatch_top_pesticides(self, ctx: dict) -> Optional[Tuple[str, Optional[pd.DataFrame]]]:
         """Top N pesticides overall or in non-compliant samples (Batch 5a).
@@ -57,17 +76,18 @@ class KeywordPatternsMixin:
             return None
         q = norm(query)
         verdict = compliance_intent(query)
-        ranking = any(p.search(q) for p in self._TOP_PESTICIDE_PATTERNS) or (
+        ranking = self._top_pesticide_phrase(q) or (
             verdict == 'non_compliant' and bool(self._PESTICIDES_IN_SAMPLES.search(q)))
         non_compliant = verdict == 'non_compliant'        # incl. "عدم المطابقة" (text_norm)
-        if not ranking:
+        if not ranking or self._BY_RATE.search(q):
             return None
         if verdict == 'compliant' and not non_compliant:
             return None
         scope = 'non_compliant' if non_compliant else 'all'
         counts = count_for_nouns(query, COUNT_NOUNS["pesticides"])
         n = counts[0] if counts else self._top_n(query, default=5)
-        return self._handle_top_pesticides(ctx, scope, max(1, min(int(n), 50)))
+        return self._handle_top_pesticides(ctx, scope, max(1, min(int(n), 50)),
+                                           by_above_limit=bool(self._BY_VIOLATIONS.search(q)))
 
     def _dispatch_rate_breakdown(self, ctx: dict) -> Optional[Tuple[str, Optional[pd.DataFrame]]]:
         """Rate / performance questions broken down by municipality, neighborhood

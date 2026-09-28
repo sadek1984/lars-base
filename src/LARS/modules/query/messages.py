@@ -20,7 +20,7 @@ class Refusal(str):
 
     Kinds: out_of_scope, not_understood, category, multi_month,
     unresolved_period, period_not_applied, group_not_applied,
-    unresolved_product, unresolved_municipality.
+    n_pesticides_not_asked, unresolved_product, unresolved_municipality.
     """
     kind: str
 
@@ -68,6 +68,14 @@ def group_not_applied_message(dimension: str) -> Refusal:
     return Refusal("group_not_applied", (
         f"⚠️ لم أتمكن من عرض النتيجة موزعة حسب {GROUP_AR[dimension]} كما طُلب، "
         f"ولن أعرض توزيعاً مختلفاً بدلاً منه."))
+
+
+# _handle_n_pesticides / _handle_multiple_n_pesticides ("samples containing
+# exactly N pesticides") answered a question that does not ask for that
+# (e.g. "أعلى خمس مبيدات" read as N = 5).
+N_PESTICIDES_NOT_ASKED_MESSAGE = Refusal("n_pesticides_not_asked", (
+    "⚠️ لم أتمكن من فهم هذا السؤال عن المبيدات بشكل موثوق، ولن أعرض بدلاً منه "
+    "العينات التي تحتوي على عدد محدد من المبيدات."))
 
 
 # A period was understood, but the handler that would answer cannot filter by

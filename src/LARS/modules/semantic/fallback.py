@@ -41,7 +41,7 @@ MODES = ("off", "shadow", "live")
 SEMANTIC_ELIGIBLE = frozenset({
     "not_understood", "unresolved_product", "unresolved_period",
     "unresolved_municipality", "multi_month", "category", "period_not_applied",
-    "group_not_applied",
+    "group_not_applied", "n_pesticides_not_asked",
 })
 DEFAULT_LOG = Path(__file__).resolve().parents[4] / "logs" / "semantic_log.jsonl"
 

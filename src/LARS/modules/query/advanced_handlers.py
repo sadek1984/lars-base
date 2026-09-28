@@ -532,7 +532,8 @@ class AdvancedHandlersMixin:
                     products = []
         return products, categories
 
-    def _handle_top_pesticides(self, ctx: dict, scope: str, n: Optional[int]) -> Tuple[str, pd.DataFrame]:
+    def _handle_top_pesticides(self, ctx: dict, scope: str, n: Optional[int],
+                               by_above_limit: bool = False) -> Tuple[str, pd.DataFrame]:
         """Top N pesticides over a scope of samples.
 
         scope 'all'           → every sample matching the filters, ranked by
@@ -540,6 +541,8 @@ class AdvancedHandlersMixin:
         scope 'non_compliant' → samples whose official verdict (sample_result,
                                 as stored) is Non-Compliant, ranked by
                                 samples_above_limit, then samples_detected.
+        by_above_limit        → ranked by samples_above_limit first, whatever the
+                                scope ("من حيث عدد المخالفات").
         Both counts are distinct samples; ties break on pesticide name.
         n=None lists every pesticide.
 
@@ -599,8 +602,9 @@ class AdvancedHandlersMixin:
         above = rows[rows["is_above_limit"] == 1].groupby("pesticide")["code"].nunique()
         df = pd.DataFrame({"samples_detected": detected,
                            "samples_above_limit": above}).fillna(0).astype(int).reset_index()
-        keys = (["samples_detected", "samples_above_limit"] if scope == "all"
-                else ["samples_above_limit", "samples_detected"])
+        rank_above = by_above_limit or scope != "all"
+        keys = (["samples_above_limit", "samples_detected"] if rank_above
+                else ["samples_detected", "samples_above_limit"])
         df = df.sort_values(keys + ["pesticide"], ascending=[False, False, True], kind="stable")
         if n is not None:
             df = df.head(n)
@@ -611,7 +615,9 @@ class AdvancedHandlersMixin:
             response += f"المبيدات المكتشفة ({len(df)} مبيداً)، مرتبة حسب عدد العينات:\n\n"
         else:
             response += f"أكثر {len(df)} مبيدات "
-            response += ("ظهوراً" if scope == "all" else "تجاوزاً للحد الأقصى الأوروبي في هذه العينات") + ":\n\n"
+            response += ("ظهوراً" if not rank_above else
+                         "تجاوزاً للحد الأقصى الأوروبي (EU MRL)" if scope == "all" else
+                         "تجاوزاً للحد الأقصى الأوروبي في هذه العينات") + ":\n\n"
         response += df.rename(columns=self.TOP_PESTICIDE_COLUMN_LABELS).to_markdown(index=False)
         response += ("\n\n*اكتُشف في = عدد العينات التي رُصد فيها المبيد. "
                      "تجاوزت الحد الأقصى الأوروبي = عدد العينات التي تجاوز فيها الحد الأقصى الأوروبي (EU MRL)، "

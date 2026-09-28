@@ -66,8 +66,9 @@ from modules.query.messages import (CANNOT_COMPUTE_RATE_MESSAGE, EU_MRL_COUNT_LA
                                     CATEGORY_UNSUPPORTED_MESSAGE, MULTI_MONTH_MESSAGE,
                                     PERIOD_NOT_APPLIED_MESSAGE, POLITE_ERROR_MESSAGE,
                                     UNRESOLVED_PERIOD_MESSAGE, Refusal, eu_mrl_markdown,
-                                    group_not_applied_message, refusal_kind)
-from modules.query.text_norm import compliance_intent, requested_grouping
+                                    N_PESTICIDES_NOT_ASKED_MESSAGE, group_not_applied_message,
+                                    refusal_kind)
+from modules.query.text_norm import asks_samples_with_n_pesticides, compliance_intent, requested_grouping
 from modules.semantic.fallback import SEMANTIC_ELIGIBLE, init_semantic
 
 
@@ -868,6 +869,11 @@ class CoreQueryEngine(
         if wanted and refusal_kind(response_text) is None and wanted not in self._result_groupings(df):
             logging.info(f"Grouping {wanted} not applied by {[c[0] for c in self._handlers_called]}: {query!r}")
             return group_not_applied_message(wanted), None
+        # "Samples containing exactly N pesticides" only when that is the question.
+        if refusal_kind(response_text) is None and not asks_samples_with_n_pesticides(query) and any(
+                c[0] in ("_handle_n_pesticides", "_handle_multiple_n_pesticides") for c in self._handlers_called):
+            logging.info(f"N-pesticides handler for a question that does not ask for it: {query!r}")
+            return N_PESTICIDES_NOT_ASKED_MESSAGE, None
         response_text, df = self._guard_empty_scope(ctx, response_text, df)
 
         # ── Append date-range label once, regardless of which tier answered ───

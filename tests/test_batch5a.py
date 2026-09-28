@@ -285,3 +285,76 @@ def test_generic_category_questions_refused_not_broadened(engine, q):
     all data; the allow-list refuses instead."""
     from modules.query.messages import CATEGORY_UNSUPPORTED_MESSAGE
     assert engine.process(q)[0] == CATEGORY_UNSUPPORTED_MESSAGE
+
+
+# ── "أعلى/أبرز/أهم/أشهر N مبيدات" = top N, never "samples with N pesticides" ──
+
+def expected_by_above(con, n, where):
+    """Top N pesticides ranked by samples above the EU MRL, then detections."""
+    return con.execute(f"""
+        SELECT COALESCE(v.canon, lower(t.pesticide_name)) AS pesticide,
+               COUNT(DISTINCT t."كود العينة") AS det,
+               COUNT(DISTINCT CASE WHEN t.is_above_limit = 1 THEN t."كود العينة" END) AS above
+        FROM chemistry_tidy t LEFT JOIN variants v ON lower(t.pesticide_name) = v.v
+        WHERE {where} AND t.is_detected = 1 AND t.pesticide_name NOT IN ('NO DETECTION', 'NO DATA')
+        GROUP BY 1 ORDER BY above DESC, det DESC, pesticide LIMIT {n}""").fetchall()
+
+
+def ranking_rows(df):
+    return list(df[["pesticide", "samples_detected", "samples_above_limit"]].itertuples(index=False, name=None))
+
+
+@pytest.mark.parametrize("q, n, where", [
+    ("ما هي أعلى خمس مبيدات في آخر شهرين؟", 5, f"{DATE} >= {ANCHOR} - INTERVAL 2 month"),   # voice bug
+    ("أبرز 3 مبيدات في آخر شهر", 3, f"{DATE} >= {ANCHOR} - INTERVAL 1 month"),
+    ("أهم ٧ مبيدات", 7, "1=1"),
+    ("أشهر المبيدات", 5, "1=1"),
+])
+def test_top_words_rank_pesticides(engine, con, q, n, where):
+    total, rows = expected(con, "all", n, where)
+    text, df = engine.process(q)[:2]
+    assert engine._refusal is None and [c[0] for c in engine._handlers_called] == ["_handle_top_pesticides"]
+    assert f": {total} عينة" in text.splitlines()[0] and ranking_rows(df) == rows
+
+
+@pytest.mark.parametrize("qid", ["D005", "D029"])            # "من حيث عدد المخالفات"
+def test_top_by_violations_ranks_by_above_limit(engine, con, bank, qid):
+    text, df = engine.process(bank[qid])[:2]
+    assert "تجاوزاً للحد الأقصى الأوروبي (EU MRL)" in text
+    assert ranking_rows(df) == expected_by_above(con, 5, "1=1")
+
+
+@pytest.mark.parametrize("q", ["أعلى 5 مبيدات في الخضار", "أهم 10 مبيدات في التوابل"])
+def test_top_words_in_a_category_are_refused(engine, q):
+    from modules.query.messages import CATEGORY_UNSUPPORTED_MESSAGE
+    assert engine.process(q)[0] == CATEGORY_UNSUPPORTED_MESSAGE      # live: semantic answers
+
+
+def test_months_are_not_a_ranking(engine):
+    assert not engine._top_pesticide_phrase("ما هي المبيدات في اخر 3 اشهر المبيدات")
+    assert engine._top_pesticide_phrase("اشهر 5 مبيدات")
+
+
+# N-pesticides handlers only for "samples containing N pesticides"
+@pytest.mark.parametrize("qid", ["B030", "C015", "D006"])
+def test_n_pesticides_misroutes_are_refused(engine, bank, qid):
+    text, df = engine.process(bank[qid])[:2]
+    assert engine._refusal == "n_pesticides_not_asked" and df is None
+
+
+@pytest.mark.parametrize("q", ["كم عينة فيها 5 مبيدات", "ما هو عدد العينات التي تحتوي على ٦ مبيدات؟",
+                               "ما هي العينات التي وصلت للحد الأقصى ١٠ متبقيات؟",
+                               "ما هي العينات الخالية تماماً من المبيدات؟", "عينات بمبيدين",
+                               "samples with 3 pesticides"])
+def test_samples_with_n_pesticides_still_answer(engine, q):
+    from modules.query.text_norm import asks_samples_with_n_pesticides
+    _, df = engine.process(q)[:2]
+    assert asks_samples_with_n_pesticides(q) and engine._refusal is None and df is not None
+    assert any("n_pesticides" in c[0] for c in engine._handlers_called)
+
+
+@pytest.mark.parametrize("q", ["أعلى 5 مبيدات", "ما هي أعلى ١٠ مبيدات من حيث نسبة المخالفة؟",
+                               "ما هي المنتجات التي متوسط عدد مبيداتها أعلى من ٤؟"])
+def test_rankings_do_not_ask_for_samples_with_n(q):
+    from modules.query.text_norm import asks_samples_with_n_pesticides
+    assert not asks_samples_with_n_pesticides(q)
