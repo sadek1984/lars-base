@@ -201,8 +201,15 @@ def run(r: ResolvedSpec, catalog: Catalog, db_path: str) -> Tuple[pd.DataFrame, 
             return con.execute(sql, params).df(), None, {**info, "sql": sql}
         group = GROUP_EXPR.get(r.spec.group_by) if r.spec.group_by else None
         limit = r.spec.top_n if (group and "top_n" in r.spec.model_fields_set) else None
-        sql, params = _sample_metric_sql(r, group, limit)
+        # Fetch past top_n so groups tied with the last shown place are reported
+        # (never silently cut by name order); the answer lists top_n rows.
+        sql, params = _sample_metric_sql(r, group, None)
         df = con.execute(sql, params).df()
+        if limit and len(df) > limit:
+            last = df[MAIN_COLUMN[m]].iloc[limit - 1]
+            rest = df.iloc[limit:]
+            info["tied_beyond_top_n"] = rest.loc[rest[MAIN_COLUMN[m]] == last, "grp"].tolist()
+            df = df.head(limit)
         total = None
         if group:
             total = con.execute(*_sample_metric_sql(r, None, None)).df()

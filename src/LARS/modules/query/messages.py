@@ -61,7 +61,7 @@ UNRESOLVED_PERIOD_MESSAGE = Refusal("unresolved_period", (
 # The question asks for a ranking/breakdown by a group (neighborhoods,
 # municipalities, products, months) but the answering handler's table is not
 # grouped by it (CoreQueryEngine._result_groupings).
-GROUP_AR = {"neighborhood": "الحي", "municipality": "البلدية", "product": "المنتج", "month": "الشهر"}
+GROUP_AR = {"pesticide": "المبيد", "neighborhood": "الحي", "municipality": "البلدية", "product": "المنتج", "month": "الشهر"}
 
 
 def group_not_applied_message(dimension: str) -> Refusal:

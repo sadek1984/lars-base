@@ -310,7 +310,7 @@ def test_adam_answers_match_sql(engine, q, samples, nc):
     ("الأحياء الأكثر مخالفة", "neighborhood"), ("لكل بلدية", "municipality"), ("ما عدد العينات في كل بلدية", "municipality"),
     ("أعلى ٥ منتجات من حيث نسبة الرسوب", "product"), ("شلون كان الوضع شهر بشهر", "month"),
     ("ما عدد العينات المفحوصة شهرياً؟", "month"), ("حسب الشهر", "month"),
-    ("كم عينة في حي الإسكان", None), ("آخر 3 أشهر", None), ("كم عدد الأحياء", None), ("أكثر 5 مبيدات", None),
+    ("كم عينة في حي الإسكان", None), ("آخر 3 أشهر", None), ("كم عدد الأحياء", None), ("أكثر 5 مبيدات", "pesticide"), ("أكثر من 5 مبيدات", None),
 ])
 def test_requested_grouping(q, dim):
     from modules.query.text_norm import requested_grouping

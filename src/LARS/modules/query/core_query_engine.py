@@ -628,17 +628,22 @@ class CoreQueryEngine(
 
     # Result columns that mean "one row per <dimension>".
     _GROUP_COLUMNS = {
+        "pesticide": {"pesticide", "pesticide_name", "المبيد", "Pesticide"},
         "neighborhood": {"neighborhood", "الحى", "الحي"},
         "municipality": {"municipality", "اسم البلدية", "البلدية"},
         "product": {"sample_type", "product", "اسم العينة", "المنتج"},
         "month": {"month"},
     }
 
+    # Handlers whose answer text holds a table grouped by a dimension that the
+    # returned DataFrame does not (comprehensive analysis: per-pesticide stats).
+    _TEXT_GROUPINGS = {"_handle_comprehensive_analysis": {"pesticide"}}
+
     def _result_groupings(self, df: Optional[pd.DataFrame]) -> set:
         """Dimensions the answer's table is grouped by: its columns, plus the
         answering handler's own argument for generic columns (entity_name of
         _handle_top_n_by_metric, period of _handle_time_series_* by month)."""
-        if df is None or df.empty or not self._handlers_called:
+        if df is None or not self._handlers_called:        # an empty table still has its shape
             return set()
         cols = {str(c) for c in df.columns}
         dims = {d for d, names in self._GROUP_COLUMNS.items() if names & cols}
@@ -651,6 +656,7 @@ class CoreQueryEngine(
             dims.add(bound["entity"])
         if "period" in cols and bound.get("granularity") == "month":
             dims.add("month")
+        dims |= self._TEXT_GROUPINGS.get(name, set())
         return dims
 
     def _quarter_grouped(self) -> bool:
@@ -864,16 +870,16 @@ class CoreQueryEngine(
                 or (ctx.get('quarter_named') and not self._quarter_grouped())):
             logging.info(f"Period not applied by {[c[0] for c in self._handlers_called]}: {query!r}")
             return PERIOD_NOT_APPLIED_MESSAGE, None
-        # Same for a ranking/breakdown by a group: the table must be grouped by it.
-        wanted = requested_grouping(query)
-        if wanted and refusal_kind(response_text) is None and wanted not in self._result_groupings(df):
-            logging.info(f"Grouping {wanted} not applied by {[c[0] for c in self._handlers_called]}: {query!r}")
-            return group_not_applied_message(wanted), None
         # "Samples containing exactly N pesticides" only when that is the question.
         if refusal_kind(response_text) is None and not asks_samples_with_n_pesticides(query) and any(
                 c[0] in ("_handle_n_pesticides", "_handle_multiple_n_pesticides") for c in self._handlers_called):
             logging.info(f"N-pesticides handler for a question that does not ask for it: {query!r}")
             return N_PESTICIDES_NOT_ASKED_MESSAGE, None
+        # Same for a ranking/breakdown by a group: the table must be grouped by it.
+        wanted = requested_grouping(query)
+        if wanted and refusal_kind(response_text) is None and wanted not in self._result_groupings(df):
+            logging.info(f"Grouping {wanted} not applied by {[c[0] for c in self._handlers_called]}: {query!r}")
+            return group_not_applied_message(wanted), None
         response_text, df = self._guard_empty_scope(ctx, response_text, df)
 
         # ── Append date-range label once, regardless of which tier answered ───

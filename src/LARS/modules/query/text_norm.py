@@ -312,15 +312,42 @@ _BY_WORDS = {"حسب", "لكل", "كل", "توزيع", "بحسب"}
 _RANK_AFTER = {"اعلي", "اكثر", "اقل", "اخطر", "اسوا", "افضل"}   # "الأحياء الأكثر مخالفة"
 
 
+_PEST_PLURAL = {"مبيدات", "متبقيات"}
+_PEST_RANK = {"اعلي", "اكثر", "اقل", "ادني", "اهم", "ابرز", "اشهر", "ترتيب", "رتب"}
+
+
+def _ranks_pesticides(toks: List[str], bare: List[str]) -> bool:
+    """"أعلى 5 مبيدات", "أكثر المبيدات", "المبيدات الأكثر ظهوراً", "لكل مبيد",
+    "حسب المبيد". Not "أكثر من 5 مبيدات" (per-sample count), not "توزيع عدد
+    المبيدات", not "آخر 3 أشهر المبيدات" (أشهر = months)."""
+    for i, b in enumerate(bare):
+        if b in _PEST_PLURAL:
+            if i + 1 < len(bare) and bare[i + 1] in _RANK_AFTER:
+                return True
+            j = i - 1
+            if j >= 0 and number_value(toks[j]) is not None:
+                j -= 1
+            if j >= 0 and bare[j] in _PEST_RANK:
+                if bare[j] == "اشهر" and j and (number_value(toks[j - 1]) is not None
+                                                 or bare[j - 1] in ("اخر", "خلال")):
+                    continue
+                return True
+        if b in _PEST_PLURAL | {"مبيد"} and i and bare[i - 1] in ("لكل", "حسب", "بحسب"):
+            return True
+    return False
+
+
 def requested_grouping(text: str) -> Optional[str]:
-    """The dimension a question asks to rank or break down by — 'neighborhood',
-    'municipality', 'product' or 'month' — or None. Signals: a plural group
+    """The dimension a question asks to rank or break down by — 'pesticide',
+    'neighborhood', 'municipality', 'product' or 'month' — or None. Signals: a plural group
     noun right after a ranking word ("أعلى 5 أحياء", "أكثر المنتجات") or
     followed by one ("الأحياء الأكثر"); "حسب/لكل/كل <group>"; "شهر بشهر",
     "شهرياً". A named place or period ("في حي الإسكان", "آخر 3 أشهر") is a
     filter, not a grouping."""
     toks = tokens(text)
     bare = [_strip_clitics(t) for t in toks]
+    if _ranks_pesticides(toks, bare):
+        return "pesticide"
     for i, b in enumerate(bare):
         if b in ("شهريا", "شهري") or (b == "شهر" and bare[i + 1:i + 3] in (["ب", "شهر"], ["ورا", "شهر"])) \
                 or (b == "شهر" and i + 1 < len(toks) and toks[i + 1] in ("بشهر", "لشهر")):

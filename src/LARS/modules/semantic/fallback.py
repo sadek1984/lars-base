@@ -7,7 +7,9 @@ Semantic fallback: runs only after the deterministic handlers refuse.
 
 The LLM call has an 8 s budget; any failure (timeout, invalid JSON, spec
 rejected by the validator, no matching samples) returns the original refusal.
-In live mode the validated QuerySpec is cached per normalized question, so a
+Common patterns get a deterministic spec from rules.py before the LLM is
+called (logged as source "semantic-rule"). In live mode the validated
+LLM QuerySpec is cached per normalized question, so a
 repeated question gets the same answer. Only a spec that passed validation,
 coverage and returned rows (i.e. was served) is cached; "unsupported", parse
 errors, timeouts and rejected specs are not, so the question is retried. The
@@ -35,6 +37,7 @@ from modules.semantic.answer import SemanticAnswer, answer_spec
 from modules.semantic.catalog import build_catalog
 from modules.semantic.llm import TIMEOUT_S, SpecProvider, build_system_prompt, parse_spec
 from modules.semantic.query_spec import QuerySpec
+from modules.semantic.rules import rule_spec
 
 MODES = ("off", "shadow", "live")
 # Refusals the semantic layer may try to answer. Out-of-scope is never one.
@@ -110,8 +113,13 @@ class SemanticFallback:
         """Semantic answer, or None (→ keep the refusal). Always logged."""
         t0 = time.perf_counter()
         key = norm(question)
-        cached = self.cache.get(key) if use_cache else None
-        if cached is not None:
+        # Deterministic spec for the common patterns first (rules.py); the LLM
+        # only when no rule matches cleanly.
+        rule = rule_spec(question)
+        cached = self.cache.get(key) if use_cache and rule is None else None
+        if rule is not None:
+            spec, llm = rule, {"provider": "semantic-rule", "cache_hit": False, "latency_ms": 0}
+        elif cached is not None:
             spec, llm = cached, {"provider": self.provider.name, "cache_hit": True, "latency_ms": 0}
         else:
             spec, llm = self.fill_spec(question, inline=inline)
@@ -124,12 +132,15 @@ class SemanticFallback:
             except Exception as e:
                 error = f"{type(e).__name__}: {str(e)[:300]}"
         ok = ans is not None and ans.ok
-        if ok and use_cache and self.mode == "live":
+        if ok and use_cache and self.mode == "live" and rule is None:
             self.cache[key] = spec
+        if ans is not None:
+            ans.info["source"] = "semantic-rule" if rule is not None else "semantic"
         self._log({
             "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "question": question,
             "mode": self.mode,
+            "source": "semantic-rule" if rule is not None else "semantic",
             "handler": {"refusal": refusal, "text": (handler_text or "")[:500]},
             "llm": llm,
             "spec": spec.model_dump(mode="json", exclude_defaults=True) if spec else None,

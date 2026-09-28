@@ -244,6 +244,9 @@ def _format(r: ResolvedSpec, df: pd.DataFrame, total: Optional[pd.DataFrame], in
         lines.append(f"• {_group_label(g, row.grp)}: {_value_line(m, row)}")
     if len(df) > TEXT_ROWS:
         lines.append(f"… والباقي في الجدول ({_n(len(df))} صفاً).")
+    if info.get("tied_beyond_top_n"):
+        tied = "، ".join(_group_label(g, v) for v in info["tied_beyond_top_n"])
+        lines.append(f"(بنفس قيمة المرتبة {_n(len(df))} أيضاً: {tied})")
     total_row = total.iloc[0]
     lines.append(f"الإجمالي: {_value_line(m, total_row)}.")
     if info.get("groups_below_threshold"):
