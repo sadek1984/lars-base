@@ -79,10 +79,17 @@ async def query_lars(request: QueryRequest):
         # "semantic" when the semantic fallback (LARS_SEMANTIC_MODE=live) answered
         # a question the handlers refused; "handler" otherwise.
         source = getattr(engine, "last_source", "handler")
-        return {"success": True, "answer": answer, "source": source}
+        # Why the handlers refused (None for an answer), e.g. "period_not_applied".
+        refusal = getattr(engine, "_refusal", None) if source == "handler" else None
+        return {"success": True, "answer": answer, "source": source, "refusal": refusal}
     except Exception as e:
         logger.error(f"Query error: {e}")
         return {"success": False, "answer": f"Error: {e}"}
 @app.get("/health")
 async def health():
-    return {"status": "ok", "lars_available": LARS_AVAILABLE}
+    # The engine's semantic mode once it is built, else the one it will use.
+    mode = getattr(_engine, "semantic_mode", None)
+    if mode is None and LARS_AVAILABLE:
+        from modules.semantic.fallback import mode_from_env
+        mode = mode_from_env()
+    return {"status": "ok", "lars_available": LARS_AVAILABLE, "semantic_mode": mode}

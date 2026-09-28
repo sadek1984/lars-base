@@ -116,6 +116,27 @@ def _period_phrase(r: ResolvedSpec) -> Optional[str]:
     return f"من {lo} إلى {hi}"
 
 
+def partial_period_note(end, max_date, unit: str = "الفترة غير مكتملة") -> Optional[str]:
+    """'البيانات المتاحة حتى 17 مايو 2026 (الربع غير مكتمل)' when the period
+    asked for ends after the last test date; None otherwise."""
+    if end <= max_date:
+        return None
+    return f"البيانات المتاحة حتى {max_date.day} {MONTHS_AR[max_date.month - 1]} {max_date.year} ({unit})"
+
+
+def _partial_period(r: ResolvedSpec, catalog: Catalog) -> Optional[str]:
+    p = r.spec.period
+    if r.period is None:
+        return None
+    if p.type in (PeriodType.absolute_month, PeriodType.latest_month):
+        unit = "الشهر غير مكتمل"
+    elif p.type is PeriodType.range and (p.from_month, p.to_month) in QUARTERS_AR:
+        unit = "الربع غير مكتمل"
+    else:
+        unit = "الفترة غير مكتملة"
+    return partial_period_note(r.period[1], catalog.max_date, unit)
+
+
 def _scope_parts(r: ResolvedSpec) -> List[str]:
     parts = []
     if r.spec.scope is Scope.non_compliant:
@@ -281,4 +302,8 @@ def answer_spec(spec: QuerySpec, catalog: Catalog, resolver, db_path: str,
         where = "، ".join(_scope_parts(r)) or "الشروط المطلوبة"
         return SemanticAnswer(False, f"⚠️ لم تطابق أي عينة هذه الشروط: {where}.", resolved=r)
     text, out = _format(r, df, total, info)
+    note = _partial_period(r, catalog)
+    if note:                                   # right after "فهمت سؤالك كالتالي: …"
+        first, _, rest = text.partition("\n")
+        text = f"{first}\n{note}\n{rest}" if rest else f"{first}\n{note}"
     return SemanticAnswer(True, text, out, r, info)

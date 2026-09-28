@@ -164,6 +164,20 @@ def test_live_caches_the_validated_spec(engine, tmp_path):
     assert log_lines(sem)[-1]["llm"]["cache_hit"] is True
 
 
+@pytest.mark.parametrize("raw", [
+    '{"metric": "sample_count", "unsupported": true, "reason": "x"}',    # LLM says unsupported
+    'not json',                                                           # parse error
+    '{"metric": "noncompliant_count", "filters": {"product": ["الطماطم"]}}',  # coverage: category dropped
+])
+def test_live_never_caches_a_refusal(engine, tmp_path, raw):
+    provider = FakeProvider({NUTS_NC: raw})
+    with_semantic(engine, "live", provider, tmp_path)
+    for _ in range(2):
+        text = engine.process(NUTS_NC)[0]
+        assert text == CATEGORY_UNSUPPORTED_MESSAGE and engine.last_source == "handler"
+    assert engine._semantic.cache == {} and len(provider.calls) == 2      # asked again each time
+
+
 # ── shadow ───────────────────────────────────────────────────────────────────
 
 def test_shadow_serves_the_handler_answer_and_logs(engine, tmp_path):
@@ -190,4 +204,20 @@ def test_service_reports_the_source(monkeypatch):
     monkeypatch.setattr(lars_service, "get_lars_engine", lambda: Stub())
     monkeypatch.setattr("modules.inspection.inspection_priority.classify_inspection_priority", lambda q: None)
     out = asyncio.run(lars_service.query_lars(lars_service.QueryRequest(query="x")))
-    assert out == {"success": True, "answer": "answer", "source": "semantic"}
+    assert out == {"success": True, "answer": "answer", "source": "semantic", "refusal": None}
+
+
+def test_service_reports_the_refusal(monkeypatch):
+    pytest.importorskip("fastapi")
+    import asyncio
+    import lars_service
+
+    class Stub:
+        last_source, _refusal = "handler", "period_not_applied"
+
+        def process(self, q):
+            return "⚠️ refused", None
+    monkeypatch.setattr(lars_service, "get_lars_engine", lambda: Stub())
+    monkeypatch.setattr("modules.inspection.inspection_priority.classify_inspection_priority", lambda q: None)
+    out = asyncio.run(lars_service.query_lars(lars_service.QueryRequest(query="x")))
+    assert out["source"] == "handler" and out["refusal"] == "period_not_applied"

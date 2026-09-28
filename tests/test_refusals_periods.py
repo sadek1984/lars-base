@@ -231,3 +231,42 @@ def test_semantic_keeps_the_named_year(q, period, ok):
     spec = QuerySpec.model_validate({"metric": "sample_count", **({"period": period} if period else {})})
     a = answer_spec(spec, cat, res, str(DB_PATH), question=q)
     assert a.ok is ok, a.text
+
+
+# ── partial periods: the data ends 2026-05-17 ────────────────────────────────
+
+PARTIAL = "البيانات المتاحة حتى 17 مايو 2026"
+
+
+@pytest.mark.parametrize("period, note, nc, n", [
+    ({"type": "range", "from_month": 4, "to_month": 6, "year": 2026}, "(الربع غير مكتمل)", 89, 744),   # Q2
+    ({"type": "absolute_month", "month": 5}, "(الشهر غير مكتمل)", 30, 229),
+    ({"type": "latest_month"}, "(الشهر غير مكتمل)", 30, 229),
+    ({"type": "range", "from_month": 3, "to_month": 5}, "(الفترة غير مكتملة)", None, None),
+    ({"type": "range", "from_month": 1, "to_month": 3, "year": 2026}, None, 152, 1111),                # Q1: complete
+    ({"type": "relative", "n": 2, "unit": "month"}, None, None, None),                                   # anchored on MAX
+])
+def test_semantic_says_the_period_is_incomplete(period, note, nc, n):
+    import duckdb
+    from modules.query.entity_resolver import EntityResolver
+    from modules.semantic.answer import answer_spec
+    from modules.semantic.catalog import build_catalog
+    from modules.semantic.query_spec import QuerySpec
+    cat = build_catalog(str(DB_PATH))
+    with duckdb.connect(str(DB_PATH), read_only=True) as con:
+        res = EntityResolver(con)
+    a = answer_spec(QuerySpec.model_validate({"metric": "noncompliance_rate", "period": period}), cat, res, str(DB_PATH))
+    lines = a.text.splitlines()
+    assert a.ok and lines[0].startswith("فهمت سؤالك كالتالي")
+    if note:
+        assert lines[1] == f"{PARTIAL} {note}"
+    else:
+        assert PARTIAL not in a.text
+    if n is not None:
+        assert (int(a.df["non_compliant"].iloc[0]), int(a.df["samples"].iloc[0])) == (nc, n)
+
+
+def test_handler_month_says_it_is_incomplete(engine):
+    may = engine.process("ما هي العينات غير المطابقة في شهر مايو؟")[0]
+    march = engine.process("ما هي العينات غير المطابقة في شهر مارس؟")[0]
+    assert may.endswith(f"⚠️ {PARTIAL} (الشهر غير مكتمل)") and PARTIAL not in march

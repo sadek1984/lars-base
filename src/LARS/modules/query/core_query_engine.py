@@ -609,6 +609,17 @@ class CoreQueryEngine(
                 return False
         return True
 
+    def _partial_month_note(self, detected_period: Optional[str]) -> Optional[str]:
+        """The absolute-month filter ("في مايو") on the data's last month, which
+        ends before the month does: say the month is incomplete."""
+        m = re.search(r"date_part\('month', .*\) = (\d+)$", detected_period or "")
+        max_date = self._data_max_date() if m else None
+        if max_date is None or int(m.group(1)) != max_date.month:
+            return None
+        from modules.semantic.answer import partial_period_note
+        month_end = (pd.Timestamp(max_date) + pd.offsets.MonthEnd(0)).date()
+        return partial_period_note(month_end, max_date, "الشهر غير مكتمل")
+
     def _quarter_grouped(self) -> bool:
         """True if the answer is a quarterly breakdown (the quarters named are
         its rows, e.g. D016 "بين الربع الأول والربع الثاني")."""
@@ -824,6 +835,9 @@ class CoreQueryEngine(
         # ── Append date-range label once, regardless of which tier answered ───
         if period_label:
             response_text += f"\n\n📅 **الفترة الزمنية:** {period_label}"
+        note = self._partial_month_note(detected_period)
+        if note and refusal_kind(response_text) is None:
+            response_text += f"\n\n⚠️ {note}"
 
         return response_text, df
 

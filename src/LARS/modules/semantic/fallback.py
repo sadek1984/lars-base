@@ -8,7 +8,11 @@ Semantic fallback: runs only after the deterministic handlers refuse.
 The LLM call has an 8 s budget; any failure (timeout, invalid JSON, spec
 rejected by the validator, no matching samples) returns the original refusal.
 In live mode the validated QuerySpec is cached per normalized question, so a
-repeated question gets the same answer. Every run is logged to
+repeated question gets the same answer. Only a spec that passed validation,
+coverage and returned rows (i.e. was served) is cached; "unsupported", parse
+errors, timeouts and rejected specs are not, so the question is retried. The
+cache is in memory, per engine process (lost on restart; one per worker) —
+scripts/warmup_demo.py fills it through the running service. Every run is logged to
 logs/semantic_log.jsonl.
 """
 from __future__ import annotations

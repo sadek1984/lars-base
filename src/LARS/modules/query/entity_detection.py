@@ -241,12 +241,21 @@ class EntityDetectionMixin:
 
     def _data_years(self) -> List[int]:
         """Calendar years present in chemistry_tidy (cached per engine)."""
-        if getattr(self, "_data_years_cache", None) is None:
+        return self._data_dates()[0]
+
+    def _data_max_date(self):
+        """MAX(test_date) (cached per engine)."""
+        return self._data_dates()[1]
+
+    def _data_dates(self):
+        if getattr(self, "_data_dates_cache", None) is None:
             con = self._get_connection()
             try:
-                self._data_years_cache = [int(y) for (y,) in con.execute(
+                years = [int(y) for (y,) in con.execute(
                     "SELECT DISTINCT year(test_date) FROM chemistry_tidy "
                     "WHERE test_date IS NOT NULL ORDER BY 1").fetchall()]
+                max_date = con.execute("SELECT MAX(test_date) FROM chemistry_tidy").fetchone()[0]
             finally:
                 con.close()
-        return self._data_years_cache
+            self._data_dates_cache = (years, max_date)
+        return self._data_dates_cache
